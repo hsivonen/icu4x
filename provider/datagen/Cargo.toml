@@ -39,11 +39,13 @@ elsa = "1.7"
 eyre = "0.6"
 icu_calendar = { version = "0.5", path = "../../components/calendar", features = ["datagen"] }
 icu_codepointtrie = { version = "0.3.3", path = "../../utils/codepointtrie", features = ["serde_serialize"] }
+icu_collator = { version = "0.5", path = "../../experimental/collator", features = ["datagen"]  }
 icu_datetime = { version = "0.5", path = "../../components/datetime", features = ["datagen"] }
 icu_decimal = { version = "0.5", path = "../../components/decimal", features = ["datagen"] }
 icu_list = { version = "0.5", path = "../../components/list", features = ["datagen"]}
 icu_locale_canonicalizer = { version = "0.5", path = "../../components/locale_canonicalizer", features = ["datagen"] }
 icu_locid = { version = "0.5", path = "../../components/locid", features = ["std"]}
+icu_normalizer = { version = "0.5", path = "../../experimental/normalizer", features = ["datagen"]  }
 icu_plurals = { version = "0.5", path = "../../components/plurals", features = ["datagen"] }
 icu_properties = { version = "0.5", path = "../../components/properties", features = ["std", "datagen"]}
 icu_provider = { version = "0.5", path = "../core", features = ["std", "log_error_context"]}

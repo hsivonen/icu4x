@@ -52,6 +52,8 @@
 pub mod cldr;
 #[cfg(feature = "experimental")]
 pub mod segmenter;
+#[cfg(feature = "experimental")]
+pub mod collator;
 pub mod uprops;
 
 use std::path::PathBuf;
@@ -70,6 +72,8 @@ pub fn get_all_keys() -> Vec<ResourceKey> {
         use icu_provider::ResourceMarker;
         v.extend(icu_segmenter::ALL_KEYS);
         v.push(icu_casemapping::provider::CaseMappingV1Marker::KEY);
+        v.extend(icu_collator::provider::key::ALL_KEYS);
+        v.push(icu_normalizer::provider::key::CANONICAL_DECOMPOSITION_KEY);
     }
     v
 }
@@ -91,6 +95,12 @@ pub struct DatagenOptions {
     ///
     /// If `None`, providers that need segmentation source data cannot be constructed.
     pub segmenter_data_root: Option<PathBuf>,
+
+    #[cfg(feature = "experimental")]
+    /// Path to collator source data.
+    ///
+    /// If `None`, providers that need collator source data cannot be constructed.
+    pub collator_data_root: Option<PathBuf>,
 }
 
 impl DatagenOptions {
@@ -104,6 +114,8 @@ impl DatagenOptions {
             uprops_root: Some(icu_testdata::paths::uprops_toml_root()),
             #[cfg(feature = "experimental")]
             segmenter_data_root: Some(segmenter::segmenter_data_root()),
+            #[cfg(feature = "experimental")]
+            collator_data_root: Some(icu_testdata::paths::coll_toml_root()),
         }
     }
 }
@@ -233,9 +245,15 @@ macro_rules! create_datagen_provider {
                 $crate::uprops::EnumeratedPropertyCodePointTrieProvider,
                 $crate::uprops::ScriptWithExtensionsPropertyProvider,
                 $crate::uprops::EnumeratedPropertyUnicodeSetDataProvider,
+                $crate::uprops::CanonicalDecompositionDataProvider,
                 // Has to go last as it matches all props/ keys.
                 $crate::uprops::BinaryPropertyUnicodeSetDataProvider,
                 $crate::segmenter::SegmenterRuleProvider,
+                $crate::collator::CollationDataDataProvider,
+                $crate::collator::CollationDiacriticsDataProvider,
+                $crate::collator::CollationJamoDataProvider,
+                $crate::collator::CollationMetadataDataProvider,
+                $crate::collator::CollationReorderingDataProvider,
             ]
         )
     };

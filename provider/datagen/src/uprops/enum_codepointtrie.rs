@@ -6,6 +6,7 @@ use crate::uprops::uprops_helpers::{self, get_last_component_no_version, TomlEnu
 use crate::uprops::uprops_serde::SerializedCodePointTrie;
 
 use icu_codepointtrie::{CodePointTrie, CodePointTrieHeader, TrieType, TrieValue};
+
 use icu_properties::provider::*;
 use icu_properties::provider::{UnicodePropertyMapV1, UnicodePropertyMapV1Marker};
 use icu_properties::{

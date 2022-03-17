@@ -128,6 +128,18 @@ fn main() -> eyre::Result<()> {
                 .default_value("small"),
         )
         .arg(
+            Arg::with_name("COLL_ROOT")
+                .long("coll-root")
+                .value_name("PATH")
+                .help(
+                    "Path to the icuexportdata coll directory. Download a \
+                    icuexportdata_uprops_*.zip file and point to the \
+                    'coll' subdirectory.\n\
+                    https://github.com/unicode-org/icu/releases",
+                )
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("INPUT_FROM_TESTDATA")
                 .long("input-from-testdata")
                 .help("Load input data from the icu_testdata project."),
@@ -349,6 +361,15 @@ fn main() -> eyre::Result<()> {
             }),
             #[cfg(feature = "experimental")]
             segmenter_data_root: Some(icu_datagen::segmenter::segmenter_data_root()),
+
+            #[cfg(feature = "experimental")]
+            collator_data_root: Some(if let Some(path) = matches.value_of("COLL_ROOT") {
+                    PathBuf::from(path)
+                } else if matches.is_present("INPUT_FROM_TESTDATA") {
+                    icu_testdata::paths::coll_toml_root()
+                } else {
+                    eyre::bail!("Value for --coll-root must be specified",)
+                }),
         }
     };
 
