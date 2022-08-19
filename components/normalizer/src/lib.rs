@@ -2380,7 +2380,11 @@ impl ComposingNormalizer {
                         undecomposed_starter = upcoming_with_trie_value;
                         // Logically, to get `undecomposed_starter_valid` set to true
                         // we should do `counter_reference = counter - 1;` here.
-                        // However, doing so destroys performance.
+                        // However, doing so regresses the performance of the loop on
+                        // `upcoming32 < composition_passthrough_bound`.
+
+                        // Uncomment the following line to see the perf difference:
+                        // counter_reference = counter - 1;
                         continue 'fast;
                     }
                     // We need to fall off the fast path.
