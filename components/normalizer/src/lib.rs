@@ -364,6 +364,16 @@ fn compose_non_hangul(mut iter: Char16TrieIterator, starter: char, second: char)
     }
 }
 
+// Checks if a value offset to start from the surrogate range
+// start is within the high surrogate range.
+//
+// The point of having this as an `inline(never)` function
+// is to get execution to prefer the BMP code path.
+#[inline(never)]
+fn surrogate_speculation_barrier(surrogate_base: u32) -> bool {
+    surrogate_base <= (0xDBFF - 0xD800)
+}
+
 /// Struct for holding together a character and the value
 /// looked up for it from the NFD trie in a more explicit
 /// way than an anonymous pair.
@@ -1933,7 +1943,7 @@ impl DecomposingNormalizer {
                             // Not surrogate
                             break 'surrogateloop;
                         }
-                        if surrogate_base <= (0xDBFF - 0xD800) {
+                        if surrogate_speculation_barrier(surrogate_base) {
                             let iter_backup = code_unit_iter.clone();
                             if let Some(&low) = code_unit_iter.next() {
                                 if in_inclusive_range16(low, 0xDC00, 0xDFFF) {
@@ -2375,7 +2385,7 @@ impl ComposingNormalizer {
                             // Not surrogate
                             break 'surrogateloop;
                         }
-                        if surrogate_base <= (0xDBFF - 0xD800) {
+                        if surrogate_speculation_barrier(surrogate_base) {
                             let iter_backup = code_unit_iter.clone();
                             if let Some(&low) = code_unit_iter.next() {
                                 if in_inclusive_range16(low, 0xDC00, 0xDFFF) {
