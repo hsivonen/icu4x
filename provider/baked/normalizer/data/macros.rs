@@ -59,3 +59,8 @@ pub use __impl_normalizer_nfkdex_v1 as impl_normalizer_nfkdex_v1;
 mod normalizer_uts46d_v1;
 #[doc(inline)]
 pub use __impl_normalizer_uts46d_v1 as impl_normalizer_uts46d_v1;
+#[macro_use]
+#[path = "macros/normalizer_uts46sets_v1.rs.data"]
+mod normalizer_uts46sets_v1;
+#[doc(inline)]
+pub use __impl_normalizer_uts46sets_v1 as impl_normalizer_uts46sets_v1;

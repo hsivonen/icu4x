@@ -77,7 +77,8 @@ fn main() {
             .collect()
     };
 
-    let source = DatagenProvider::new_latest_tested();
+    let source = DatagenProvider::new_latest_tested()
+    .with_icuexport("/opt/Projects/icu4x/provider/datagen/tests/data/icuexport/".into()).unwrap();
 
     let driver = DatagenDriver::new()
         .with_locales(

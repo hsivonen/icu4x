@@ -70,6 +70,8 @@ extern crate alloc;
 mod error;
 pub mod properties;
 pub mod provider;
+#[cfg(feature = "experimental")]
+pub mod uts46;
 
 pub use crate::error::NormalizerError;
 
@@ -1731,7 +1733,7 @@ impl DecomposingNormalizer {
 
     #[doc(hidden)]
     #[cfg(all(feature = "experimental", feature = "compiled_data"))]
-    pub const fn new_uts46_decomposed_without_ignored_and_disallowed() -> Self {
+    pub(crate) const fn new_uts46_decomposed_without_ignored_and_disallowed() -> Self {
         const _: () = assert!(
             crate::provider::Baked::SINGLETON_NORMALIZER_NFDEX_V1
                 .scalars16
@@ -1805,10 +1807,10 @@ impl DecomposingNormalizer {
     /// canonically equivalent with each other if they differ by how U+0345 is ordered relative
     /// to other reorderable characters.
     ///
-    /// Public for testing only.
+    /// Crate-public for testing only.
     #[doc(hidden)]
     #[cfg(feature = "experimental")]
-    pub fn try_new_uts46_decomposed_without_ignored_and_disallowed_unstable<D>(
+    pub(crate) fn try_new_uts46_decomposed_without_ignored_and_disallowed_unstable<D>(
         provider: &D,
     ) -> Result<Self, NormalizerError>
     where
@@ -2243,7 +2245,7 @@ impl ComposingNormalizer {
 
     /// See [`Self::try_new_uts46_without_ignored_and_disallowed_unstable`].
     #[cfg(all(feature = "experimental", feature = "compiled_data"))]
-    pub const fn new_uts46_without_ignored_and_disallowed() -> Self {
+    pub(crate) const fn new_uts46_without_ignored_and_disallowed() -> Self {
         ComposingNormalizer {
             decomposing_normalizer:
                 DecomposingNormalizer::new_uts46_decomposed_without_ignored_and_disallowed(),
@@ -2284,7 +2286,7 @@ impl ComposingNormalizer {
     /// <a href="https://github.com/unicode-org/icu4x/issues/2614">#2614</a>
     /// </div>
     #[cfg(feature = "experimental")]
-    pub fn try_new_uts46_without_ignored_and_disallowed_unstable<D>(
+    pub(crate) fn try_new_uts46_without_ignored_and_disallowed_unstable<D>(
         provider: &D,
     ) -> Result<Self, NormalizerError>
     where

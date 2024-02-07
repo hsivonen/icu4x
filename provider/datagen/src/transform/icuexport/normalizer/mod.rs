@@ -6,6 +6,8 @@
 //! exported from ICU.
 
 use icu_collections::char16trie::Char16Trie;
+use icu_collections::codepointinvlist::CodePointInversionList;
+use icu_collections::codepointinvlist::CodePointInversionListBuilder;
 use icu_collections::codepointtrie::CodePointTrie;
 use icu_normalizer::provider::*;
 use icu_provider::datagen::IterableDataProvider;
@@ -14,6 +16,14 @@ use std::convert::TryFrom;
 use zerovec::ZeroVec;
 
 mod normalizer_serde;
+
+fn ranges_to_inv_list(ranges: &[(u32, u32)]) -> CodePointInversionList<'static> {
+    let mut builder = CodePointInversionListBuilder::new();
+    for (start, end) in ranges {
+        builder.add_range32(&(start..=end));
+    }
+    builder.build()
+}
 
 macro_rules! normalization_provider {
     ($marker:ident, $serde_struct:ident, $file_name:literal, $conversion:expr, $toml_data:ident) => {
@@ -167,6 +177,26 @@ macro_rules! normalization_non_recursive_decomposition_supplement_provider {
     };
 }
 
+macro_rules! normalization_uts46_sets_provider {
+    ($marker:ident, $file_name:literal) => {
+        normalization_provider!(
+            $marker,
+            Uts46Sets,
+            $file_name,
+            {
+                Ok(DataResponse {
+                    metadata: DataResponseMetadata::default(),
+                    payload: Some(DataPayload::from_owned(Uts46SetsV1 {
+                        ignored: ranges_to_inv_list(&toml_data.ignored),
+                        disallowed: ranges_to_inv_list(&toml_data.disallowed),
+                    })),
+                })
+            },
+            toml_data // simply matches the identifier in the above block
+        );
+    };
+}
+
 normalization_data_provider!(CanonicalDecompositionDataV1Marker, "nfd");
 
 normalization_supplement_provider!(CompatibilityDecompositionSupplementV1Marker, "nfkd");
@@ -185,3 +215,5 @@ normalization_non_recursive_decomposition_supplement_provider!(
     NonRecursiveDecompositionSupplementV1Marker,
     "decompositionex"
 );
+
+normalization_uts46_sets_provider!(Uts46SetsV1Marker, "uts46sets");

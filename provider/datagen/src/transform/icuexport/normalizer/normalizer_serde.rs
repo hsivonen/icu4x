@@ -38,3 +38,9 @@ pub struct NonRecursiveDecompositionSupplement {
     pub trie: CodePointTrieToml,
     pub scalars32: Vec<u32>,
 }
+
+#[derive(serde::Deserialize)]
+pub struct Uts46Sets {
+    pub ignored: Vec<(u32, u32)>,
+    pub disallowed: Vec<(u32, u32)>,
+}

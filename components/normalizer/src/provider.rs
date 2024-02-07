@@ -16,6 +16,7 @@
 #![allow(clippy::exhaustive_structs, clippy::exhaustive_enums)]
 
 use icu_collections::char16trie::Char16Trie;
+use icu_collections::codepointinvlist::CodePointInversionList;
 use icu_collections::codepointtrie::CodePointTrie;
 use icu_provider::prelude::*;
 use zerovec::ZeroVec;
@@ -45,6 +46,7 @@ const _: () = {
     icu_normalizer_data::impl_normalizer_nfkd_v1!(Baked);
     icu_normalizer_data::impl_normalizer_nfkdex_v1!(Baked);
     icu_normalizer_data::impl_normalizer_uts46d_v1!(Baked);
+    icu_normalizer_data::impl_normalizer_uts46sets_v1!(Baked);
 };
 
 #[cfg(feature = "datagen")]
@@ -57,6 +59,7 @@ pub const KEYS: &[DataKey] = &[
     CompatibilityDecompositionTablesV1Marker::KEY,
     NonRecursiveDecompositionSupplementV1Marker::KEY,
     Uts46DecompositionSupplementV1Marker::KEY,
+    Uts46SetsV1Marker::KEY,
 ];
 
 /// Main data for NFD
@@ -205,4 +208,24 @@ pub struct NonRecursiveDecompositionSupplementV1<'data> {
     /// the BMP
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub scalars24: ZeroVec<'data, char>,
+}
+
+/// Sets of UTS 46 ignored and disallowed characters.
+///
+/// <div class="stab unstable">
+/// 🚧 This code is considered unstable; it may change at any time, in breaking or non-breaking ways,
+/// including in SemVer minor releases. While the serde representation of data structs is guaranteed
+/// to be stable, their Rust representation might not be. Use with caution.
+/// </div>
+#[icu_provider::data_struct(marker(Uts46SetsV1Marker, "normalizer/uts46sets@1", singleton))]
+#[derive(Debug, PartialEq, Clone)]
+#[cfg_attr(feature = "datagen", derive(serde::Serialize, databake::Bake), databake(path = icu_normalizer::provider))]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize))]
+pub struct Uts46SetsV1<'data> {
+    /// UTS 46 ignored characters
+    #[cfg_attr(feature = "serde", serde(borrow))]
+    pub ignored: CodePointInversionList<'data>,
+    /// UTS 46 disallowed characters
+    #[cfg_attr(feature = "serde", serde(borrow))]
+    pub disallowed: CodePointInversionList<'data>,
 }
