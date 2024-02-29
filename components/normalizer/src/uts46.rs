@@ -73,9 +73,7 @@ impl Uts46Mapper {
     }
 }
 
-impl<'data, 'delegate> Uts46Mapper
-where
-    'delegate: 'data,
+impl Uts46Mapper
 {
     /// Returns an iterator adaptor that turns an `Iterator` over `char`
     /// into an iterator yielding a `char` sequence that gets the following
@@ -99,11 +97,11 @@ where
     /// * Transitional processing is not performed. Transitional mapping
     ///   would be a pre-processing step, but transitional processing is
     ///   deprecated, and none of Firefox, Safari, or Chrome use it.
-    pub fn map_iter<I: Iterator<Item = char> + 'delegate>(
-        &'data self,
+    pub fn map_iter<'delegate, I: Iterator<Item = char> + 'delegate>(
+        &'delegate self,
         iter: I,
         ignored_as_errors: bool,
-    ) -> impl Iterator<Item = char> + 'data {
+    ) -> impl Iterator<Item = char> + 'delegate {
         let sets = self.sets.get();
         self.normalizer.normalize_iter(iter.filter_map(move |c| {
             if sets.ignored.contains(c) {
