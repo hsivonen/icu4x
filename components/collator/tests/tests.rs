@@ -1979,6 +1979,18 @@ fn test_prefs_overrides() {
     }
 }
 
+// Not really for testing the outcome but seeing the internals in a debugger.
+#[test]
+fn test_middle_contraction_markers() {
+    let mut options = CollatorOptions::default();
+    options.strength = Some(Strength::Tertiary);
+    let collator = Collator::try_new(Default::default(), options).unwrap();
+    assert_eq!(
+        collator.compare_utf16(&[0x0CC2, 0xDC00], &[0x0DCF, 0xDC00]),
+        core::cmp::Ordering::Less
+    );
+}
+
 // TODO: Test languages that map to the root.
 // The languages that map to root without script reordering are:
 // ca (at least for now)

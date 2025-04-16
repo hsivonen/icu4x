@@ -34,13 +34,13 @@ use crate::provider::CollationData;
 /// Marker that the decomposition does not round trip via NFC.
 ///
 /// See components/normalizer/trie-value-format.md
-const NON_ROUND_TRIP_MARKER: u32 = 1 << 30;
+pub(crate) const NON_ROUND_TRIP_MARKER: u32 = 1 << 30;
 
 /// Marker that the first character of the decomposition
 /// can combine backwards.
 ///
 /// See components/normalizer/trie-value-format.md
-const BACKWARD_COMBINING_MARKER: u32 = 1 << 31;
+pub(crate) const BACKWARD_COMBINING_MARKER: u32 = 1 << 31;
 
 /// Mask for the bits have to be zero for this to be a BMP
 /// singleton decomposition, or value baked into the surrogate
@@ -119,7 +119,7 @@ pub(crate) const QUATERNARY_MASK: u16 = 0xC0;
 // Impossible case bits 11 mark special CE32s.
 // This value itself is used to indicate a fallback to the base collator.
 const SPECIAL_CE32_LOW_BYTE: u8 = 0xC0;
-const FALLBACK_CE32: CollationElement32 = CollationElement32(SPECIAL_CE32_LOW_BYTE as u32);
+pub(crate) const FALLBACK_CE32: CollationElement32 = CollationElement32(SPECIAL_CE32_LOW_BYTE as u32);
 const LONG_PRIMARY_CE32_LOW_BYTE: u8 = 0xC1; // SPECIAL_CE32_LOW_BYTE | LONG_PRIMARY_TAG
 const COMMON_SECONDARY_CE: u64 = 0x05000000;
 const COMMON_TERTIARY_CE: u64 = 0x0500;
@@ -340,7 +340,7 @@ impl CollationElement32 {
     }
 
     #[inline(always)]
-    fn tag_checked(self) -> Option<Tag> {
+    pub(crate) fn tag_checked(self) -> Option<Tag> {
         let t = self.low_byte();
         if t < SPECIAL_CE32_LOW_BYTE {
             None
