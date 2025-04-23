@@ -53,6 +53,8 @@ use zerovec::ule::AsULE;
 
 const MERGE_SEPARATOR_PRIMARY: u32 = 0x02000000; // for U+FFFE
 
+const HANGUL_SYLLABLE_TRIE_VAL: u32 = 1;
+
 struct AnyQuaternaryAccumulator(u32);
 
 impl AnyQuaternaryAccumulator {
@@ -106,20 +108,25 @@ fn split_prefix_u8<'a, 'b>(left: &'a [u8], right: &'b [u8]) -> (&'a [u8], &'a [u
     // Tails must not start with a UTF-8 continuation
     // byte unless it's the first byte of the original
     // slice.
-    while i != 0 {
-        if let Some(left_first) = left.get(i) {
-            if (left_first & 0b1100_0000) == 0b1000_0000 {
-                i -= 1;
-                continue;
-            }
-        }
+
+    // First, left and right differ, but since they
+    // are the same afterwards, one of them needs checking
+    // only once.
+    if i != 0 {
         if let Some(right_first) = right.get(i) {
             if (right_first & 0b1100_0000) == 0b1000_0000 {
                 i -= 1;
-                continue;
             }
         }
-        break;
+        while i != 0 {
+            if let Some(left_first) = left.get(i) {
+                if (left_first & 0b1100_0000) == 0b1000_0000 {
+                    i -= 1;
+                    continue;
+                }
+            }
+            break;
+        }
     }
     if let Some((head, left_tail)) = left.split_at_checked(i) {
         if let Some(right_tail) = right.get(i..) {
@@ -127,6 +134,51 @@ fn split_prefix_u8<'a, 'b>(left: &'a [u8], right: &'b [u8]) -> (&'a [u8], &'a [u
         }
     }
     (&[], left, right)
+}
+
+fn split_prefix<'a, 'b>(left: &'a str, right: &'b str) -> (&'a str, &'a str, &'b str) {
+    let left_bytes = left.as_bytes();
+    let right_bytes = right.as_bytes();
+    let mut i = left_bytes
+        .iter()
+        .zip(right_bytes.iter())
+        .take_while(|(l, r)| l == r)
+        .count();
+    // Tails must not start with a UTF-8 continuation
+    // byte.
+
+    // Since the inputs are valid UTF-8, the first byte
+    // of either input slice cannot be a contination slice,
+    // so we may rely on finding a lead byte when walking
+    // backwards.
+
+    // Since the inputs are valid UTF-8, if a tail starts
+    // with a continuation, both tails must start with a
+    // continuation, since the most recent lead byte must
+    // be equal, so the difference is within valid UTF-8
+    // sequences of equal length.
+
+    // Therefore, it's sufficient to examine only one of
+    // the sides.
+
+    loop {
+        if let Some(left_first) = left_bytes.get(i) {
+            if (left_first & 0b1100_0000) == 0b1000_0000 {
+                i -= 1;
+                continue;
+            }
+        }
+        break;
+    }
+    // The methods below perform useless UTF-8 boundary checks,
+    // since we just checked. However, avoiding `unsafe` to
+    // make this code easier to audit.
+    if let Some((head, left_tail)) = left.split_at_checked(i) {
+        if let Some(right_tail) = right.get(i..) {
+            return (head, left_tail, right_tail);
+        }
+    }
+    ("", left, right)
 }
 
 /// Holder struct for payloads that are locale-dependent. (For code
@@ -462,11 +514,11 @@ macro_rules! compare {
             let mut left_chars = left_tail.chars();
             let mut right_chars = right_tail.chars();
             // The logic here to check whether the boundary found by skipping
-            // the identical prefix is safe is massively complicated compared
-            // to the ICU4C approach of having a set of characters that are
-            // unsafe as the character immediately after. However, this avoids
-            // extra data and working on the main data avoids the bug possibility
-            // data structures not being mutually consistent.
+            // the identical prefix is safe is complicated compared to the ICU4C
+            // approach of having a set of characters that are unsafe as the character
+            // immediately after. However, this avoids extra data and working on the
+            // main data avoids the bug possibility data structures not being mutually
+            // consistent.
 
             // This loop is only broken out of as goto forward.
             'prefix: loop {
@@ -546,7 +598,7 @@ macro_rules! compare {
                                     }
                                     // The last character of the prefix is OK on the normalization
                                     // level. Now let's check its ce32 unless it's a Hangul syllable.
-                                    if head_last_trie_val != 1 {
+                                    if head_last_trie_val != HANGUL_SYLLABLE_TRIE_VAL {
                                         head_last_ce32 = data.ce32_for_char(head_last);
                                         if head_last_ce32 == FALLBACK_CE32 {
                                             head_last_ce32 = self.root.ce32_for_char(head_last);
@@ -560,7 +612,7 @@ macro_rules! compare {
                                     }
                                     // The first character of each suffix is OK on the normalization
                                     // level. Now let's check their ce32s unless they are Hangul syllables.
-                                    if left_trie_val != 1 {
+                                    if left_trie_val != HANGUL_SYLLABLE_TRIE_VAL {
                                         left_ce32 = data.ce32_for_char(left_different);
                                         if left_ce32 == FALLBACK_CE32 {
                                             left_ce32 = self.root.ce32_for_char(left_different);
@@ -570,7 +622,7 @@ macro_rules! compare {
                                             break;
                                         }
                                     }
-                                    if right_trie_val != 1 {
+                                    if right_trie_val != HANGUL_SYLLABLE_TRIE_VAL {
                                         right_ce32 = data.ce32_for_char(right_different);
                                         if right_ce32 == FALLBACK_CE32 {
                                             right_ce32 = self.root.ce32_for_char(right_different);
@@ -652,7 +704,7 @@ macro_rules! compare {
                             }
                             // The last character of the prefix is OK on the normalization
                             // level. Now let's check its ce32 unless it's a Hangul syllable.
-                            if head_last_trie_val != 1 {
+                            if head_last_trie_val != HANGUL_SYLLABLE_TRIE_VAL {
                                 head_last_ce32 = data.ce32_for_char(head_last);
                                 if head_last_ce32 == FALLBACK_CE32 {
                                     head_last_ce32 = self.root.ce32_for_char(head_last);
@@ -667,7 +719,7 @@ macro_rules! compare {
                             // Check this _after_ `head_last_ce32` to make sure
                             // `head_last_ce32` is initialized for the next loop round
                             // trip if applicable.
-                            if tail_first_trie_val != 1 {
+                            if tail_first_trie_val != HANGUL_SYLLABLE_TRIE_VAL {
                                 if tail_first_ce32 == CollationElement32::default() {
                                     tail_first_ce32 = data.ce32_for_char(tail_first);
                                     if tail_first_ce32 == FALLBACK_CE32 {
@@ -831,21 +883,13 @@ impl CollatorBorrowed<'_> {
         self.options.into()
     }
 
-    /// Compare guaranteed well-formed UTF-8 slices.
-    pub fn compare(&self, left: &str, right: &str) -> Ordering {
-        // TODO(#2010): Identical prefix skipping not implemented.
-        let left_upcoming: SmallVec<[CharacterAndClassAndTrieValueAndCollationElement32; 10]> =
-            SmallVec::new();
-        let right_upcoming: SmallVec<[CharacterAndClassAndTrieValueAndCollationElement32; 10]> =
-            SmallVec::new();
-        let ret = self.compare_impl(left.chars(), right.chars(), left_upcoming, right_upcoming);
-        if self.options.strength() == Strength::Identical && ret == Ordering::Equal {
-            return Decomposition::new(left.chars(), self.decompositions, self.tables).cmp(
-                Decomposition::new(right.chars(), self.decompositions, self.tables),
-            );
-        }
-        ret
-    }
+    compare!(
+        /// Compare guaranteed well-formed UTF-8 slices.
+        ,
+        compare,
+        str,
+        split_prefix,
+    );
 
     compare!(
         /// Compare potentially well-formed UTF-8 slices. Ill-formed input is compared
