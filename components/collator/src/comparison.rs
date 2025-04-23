@@ -97,6 +97,38 @@ fn split_prefix_u16<'a, 'b>(
     (&[], left, right)
 }
 
+fn split_prefix_u8<'a, 'b>(left: &'a [u8], right: &'b [u8]) -> (&'a [u8], &'a [u8], &'b [u8]) {
+    let mut i = left
+        .iter()
+        .zip(right.iter())
+        .take_while(|(l, r)| l == r)
+        .count();
+    // Tails must not start with a UTF-8 continuation
+    // byte unless it's the first byte of the original
+    // slice.
+    while i != 0 {
+        if let Some(left_first) = left.get(i) {
+            if (left_first & 0b1100_0000) == 0b1000_0000 {
+                i -= 1;
+                continue;
+            }
+        }
+        if let Some(right_first) = right.get(i) {
+            if (right_first & 0b1100_0000) == 0b1000_0000 {
+                i -= 1;
+                continue;
+            }
+        }
+        break;
+    }
+    if let Some((head, left_tail)) = left.split_at_checked(i) {
+        if let Some(right_tail) = right.get(i..) {
+            return (head, left_tail, right_tail);
+        }
+    }
+    (&[], left, right)
+}
+
 /// Holder struct for payloads that are locale-dependent. (For code
 /// reuse between owned and borrowed cases.)
 #[derive(Debug)]
@@ -410,6 +442,274 @@ impl Collator {
     }
 }
 
+macro_rules! compare {
+    ($(#[$meta:meta])*,
+     $compare:ident,
+     $slice:ty,
+     $split_prefix:ident,
+    ) => {
+        $(#[$meta])*
+        pub fn $compare(&self, left: &$slice, right: &$slice) -> Ordering {
+            let (head, left_tail, right_tail) = $split_prefix(left, right);
+            if left_tail.is_empty() && right_tail.is_empty() {
+                return Ordering::Equal;
+            }
+            let mut left_upcoming: SmallVec<[CharacterAndClassAndTrieValueAndCollationElement32; 10]> =
+                SmallVec::new();
+            let mut right_upcoming: SmallVec<[CharacterAndClassAndTrieValueAndCollationElement32; 10]> =
+                SmallVec::new();
+            let mut head_chars = head.chars();
+            let mut left_chars = left_tail.chars();
+            let mut right_chars = right_tail.chars();
+            // The logic here to check whether the boundary found by skipping
+            // the identical prefix is safe is massively complicated compared
+            // to the ICU4C approach of having a set of characters that are
+            // unsafe as the character immediately after. However, this avoids
+            // extra data and working on the main data avoids the bug possibility
+            // data structures not being mutually consistent.
+
+            // This loop is only broken out of as goto forward.
+            'prefix: loop {
+                if let Some(mut head_last) = head_chars.next_back() {
+                    let norm_trie = &self.decompositions.trie;
+                    let mut at_good_boundary = false;
+                    let mut head_last_trie_val = norm_trie.get(head_last);
+                    let mut head_last_ce32 = CollationElement32::default();
+                    let data: &CollationData = if let Some(tailoring) = &self.tailoring {
+                        tailoring
+                    } else {
+                        self.root
+                    };
+                    'first: loop {
+                        let left_char;
+                        let right_char;
+                        let mut left_trie_val;
+                        let mut right_trie_val;
+                        let mut left_ce32 = CollationElement32::default();
+                        let mut right_ce32 = CollationElement32::default();
+                        if let Some(left_different) = left_chars.next() {
+                            if let Some(right_different) = right_chars.next() {
+                                left_char = left_different;
+                                right_char = right_different;
+                                // Note: left_different and right_different may both be U+FFFD.
+
+                                // If we get this far, the actual comparison algorithm would
+                                // have to read these values from the trie anyway, so we
+                                // might as well do so eagerly here to simplify subsequent code.
+                                left_trie_val = norm_trie.get(left_different);
+                                right_trie_val = norm_trie.get(right_different);
+
+                                // TODO: If we no longer store CE32s, we can get rid of
+                                // the `at_good_boundary` flag and move the insertions to the upcoming buffers
+                                // up here.
+
+                                // A boundary is safe iff the character after the
+                                // boundary is a starter that decomposes to self and
+                                // its ce32 is not a prefix ce32 (or the character
+                                // after the boundary is a Hangul syllable) AND the
+                                // character before the boundary decomposes to self
+                                // and its ce32 is not a contraction ce32 that has
+                                // the `CONTRACT_HAS_STARTER` flag set (or the
+                                // character before the boundary is a Hangul syllable).
+                                // Notably, a boundary between a Hangul syllable
+                                // and a conjoining jamo is safe, due to conjoining
+                                // jamo not being able to have prefix or contraction
+                                // ce32.
+                                // Additionally, if the numeric mode is on, and we
+                                // have a numeric ce32 before and after the boundary,
+                                // the boundary is not safe.
+
+                                // This loop is only broken out of as goto forward. The control flow
+                                // is much more readable this way.
+                                loop {
+                                    // The two highest bits are about NFC, which we don't
+                                    // care about here. Also mask off the lowest bit to
+                                    // combine the check for Hangul syllable.
+                                    if (head_last_trie_val
+                                        & !(BACKWARD_COMBINING_MARKER | NON_ROUND_TRIP_MARKER | 1))
+                                        != 0
+                                    {
+                                        break;
+                                    }
+
+                                    if (left_trie_val
+                                        & !(BACKWARD_COMBINING_MARKER | NON_ROUND_TRIP_MARKER | 1))
+                                        != 0
+                                    {
+                                        break;
+                                    }
+                                    if (right_trie_val
+                                        & !(BACKWARD_COMBINING_MARKER | NON_ROUND_TRIP_MARKER | 1))
+                                        != 0
+                                    {
+                                        break;
+                                    }
+                                    // The last character of the prefix is OK on the normalization
+                                    // level. Now let's check its ce32 unless it's a Hangul syllable.
+                                    if head_last_trie_val != 1 {
+                                        head_last_ce32 = data.ce32_for_char(head_last);
+                                        if head_last_ce32 == FALLBACK_CE32 {
+                                            head_last_ce32 = self.root.ce32_for_char(head_last);
+                                            head_last_trie_val = ROOT_FALLBACK_MARKER;
+                                        }
+                                        if head_last_ce32.tag_checked() == Some(Tag::Contraction)
+                                            && head_last_ce32.at_least_one_suffix_contains_starter()
+                                        {
+                                            break;
+                                        }
+                                    }
+                                    // The first character of each suffix is OK on the normalization
+                                    // level. Now let's check their ce32s unless they are Hangul syllables.
+                                    if left_trie_val != 1 {
+                                        left_ce32 = data.ce32_for_char(left_different);
+                                        if left_ce32 == FALLBACK_CE32 {
+                                            left_ce32 = self.root.ce32_for_char(left_different);
+                                            left_trie_val = ROOT_FALLBACK_MARKER;
+                                        }
+                                        if left_ce32.tag_checked() == Some(Tag::Prefix) {
+                                            break;
+                                        }
+                                    }
+                                    if right_trie_val != 1 {
+                                        right_ce32 = data.ce32_for_char(right_different);
+                                        if right_ce32 == FALLBACK_CE32 {
+                                            right_ce32 = self.root.ce32_for_char(right_different);
+                                            right_trie_val = ROOT_FALLBACK_MARKER;
+                                        }
+                                        if right_ce32.tag_checked() == Some(Tag::Prefix) {
+                                            break;
+                                        }
+                                    }
+                                    if self.options.numeric()
+                                        && head_last_ce32.tag_checked() == Some(Tag::Digit)
+                                        && (left_ce32.tag_checked() == Some(Tag::Digit)
+                                            || right_ce32.tag_checked() == Some(Tag::Digit))
+                                    {
+                                        break;
+                                    }
+                                    // We are at a good boundary!
+                                    at_good_boundary = true;
+                                    break;
+                                }
+                            } else {
+                                // Right empty, left not empty. The left side
+                                // might end up being ignored for collation, so we can't just
+                                // return here!
+                                // Restore `left_chars`, since we've not read the trie value
+                                left_chars = left_tail.chars();
+                                break 'first; // Skip over the insertions to the upcoming buffers.
+                            }
+                        } else {
+                            // Left empty. Right can't also be empty, since we already checked
+                            // for both being empty.
+                            debug_assert!(!right_tail.is_empty());
+                            // The right side might end up being ignored for collation,
+                            // so we can't just return here!
+                            break 'first; // Skip over the insertions to the upcoming buffers.
+                        }
+                        // Prepend to both upcomings
+                        // XXX Move this up and get rid of `at_good_boundary` if no longer storing CE32s.
+                        left_upcoming.insert(0, CharacterAndClassAndTrieValueAndCollationElement32::new_with_trie_val_and_ce32(left_char, left_trie_val, left_ce32));
+                        right_upcoming.insert(0, CharacterAndClassAndTrieValueAndCollationElement32::new_with_trie_val_and_ce32(right_char, right_trie_val, right_ce32));
+                        break 'first;
+                    }
+                    let mut tail_first;
+                    let mut tail_first_trie_val;
+                    let mut tail_first_ce32;
+                    loop {
+                        if at_good_boundary {
+                            break 'prefix;
+                        }
+                        loop {
+                            // Take a step back.
+                            tail_first = head_last;
+                            tail_first_trie_val = head_last_trie_val;
+                            tail_first_ce32 = head_last_ce32;
+
+                            head_last = if let Some(head_last) = head_chars.next_back() {
+                                head_last
+                            } else {
+                                // We need to step back beyond the start of the prefix.
+                                // We already put what we had already seen into the upcoming
+                                // buffers.
+                                at_good_boundary = true;
+                                break;
+                            };
+                            head_last_trie_val = norm_trie.get(head_last);
+                            head_last_ce32 = CollationElement32::default();
+
+                            if (head_last_trie_val
+                                & !(BACKWARD_COMBINING_MARKER | NON_ROUND_TRIP_MARKER | 1))
+                                != 0
+                            {
+                                break;
+                            }
+                            if (tail_first_trie_val
+                                & !(BACKWARD_COMBINING_MARKER | NON_ROUND_TRIP_MARKER | 1))
+                                != 0
+                            {
+                                break;
+                            }
+                            // The last character of the prefix is OK on the normalization
+                            // level. Now let's check its ce32 unless it's a Hangul syllable.
+                            if head_last_trie_val != 1 {
+                                head_last_ce32 = data.ce32_for_char(head_last);
+                                if head_last_ce32 == FALLBACK_CE32 {
+                                    head_last_ce32 = self.root.ce32_for_char(head_last);
+                                    head_last_trie_val = ROOT_FALLBACK_MARKER;
+                                }
+                                if head_last_ce32.tag_checked() == Some(Tag::Contraction)
+                                    && head_last_ce32.at_least_one_suffix_contains_starter()
+                                {
+                                    break;
+                                }
+                            }
+                            // Check this _after_ `head_last_ce32` to make sure
+                            // `head_last_ce32` is initialized for the next loop round
+                            // trip if applicable.
+                            if tail_first_trie_val != 1 {
+                                if tail_first_ce32 == CollationElement32::default() {
+                                    tail_first_ce32 = data.ce32_for_char(tail_first);
+                                    if tail_first_ce32 == FALLBACK_CE32 {
+                                        tail_first_ce32 = self.root.ce32_for_char(tail_first);
+                                        tail_first_trie_val = ROOT_FALLBACK_MARKER;
+                                    }
+                                }
+                                if tail_first_ce32.tag_checked() == Some(Tag::Prefix) {
+                                    break;
+                                }
+                                if self.options.numeric()
+                                    && head_last_ce32.tag_checked() == Some(Tag::Digit)
+                                    && tail_first_ce32.tag_checked() == Some(Tag::Digit)
+                                {
+                                    break;
+                                }
+                            }
+                            // We are at a good boundary!
+                            at_good_boundary = true;
+                            break;
+                        }
+                        // Prepend to both upcomings
+                        left_upcoming.insert(0, CharacterAndClassAndTrieValueAndCollationElement32::new_with_trie_val_and_ce32(tail_first, tail_first_trie_val, tail_first_ce32));
+                        right_upcoming.insert(0, CharacterAndClassAndTrieValueAndCollationElement32::new_with_trie_val_and_ce32(tail_first, tail_first_trie_val, tail_first_ce32));
+                    }
+                } else {
+                    // The prefix is empty
+                    break 'prefix;
+                }
+                // Unreachable line
+            }
+            let ret = self.compare_impl(left_chars, right_chars, left_upcoming, right_upcoming);
+            if self.options.strength() == Strength::Identical && ret == Ordering::Equal {
+                return Decomposition::new(left.chars(), self.decompositions, self.tables).cmp(
+                    Decomposition::new(right.chars(), self.decompositions, self.tables),
+                );
+            }
+            ret
+        }
+    }
+}
+
 /// Compares strings according to culturally-relevant ordering,
 /// borrowed version.
 #[derive(Debug)]
@@ -531,252 +831,6 @@ impl CollatorBorrowed<'_> {
         self.options.into()
     }
 
-    /// Compare potentially ill-formed UTF-16 slices. Unpaired surrogates
-    /// are compared as if each one was a REPLACEMENT CHARACTER.
-    pub fn compare_utf16(&self, left: &[u16], right: &[u16]) -> Ordering {
-        let (head, left_tail, right_tail) = split_prefix_u16(left, right);
-        let mut head_chars = head.chars();
-
-        let mut left_chars = left_tail.chars();
-        let mut right_chars = right_tail.chars();
-
-        let mut left_upcoming: SmallVec<[CharacterAndClassAndTrieValueAndCollationElement32; 10]> =
-            SmallVec::new();
-        let mut right_upcoming: SmallVec<[CharacterAndClassAndTrieValueAndCollationElement32; 10]> =
-            SmallVec::new();
-
-        // The logic here to check whether the boundary found by skipping
-        // the identical prefix is safe is massively complicated compared
-        // to the ICU4C approach of having a set of characters that are
-        // unsafe as the character immediately after. However, this avoids
-        // extra data and working on the main data avoids the bug possibility
-        // data structures not being mutually consistent.
-
-        // This loop is only broken out of as goto forward.
-        'prefix: loop {
-            if let Some(mut left_different) = left_chars.next() {
-                if let Some(mut right_different) = right_chars.next() {
-                    // Note: left_different and right_different may both be U+FFFD.
-                    if let Some(mut head_last) = head_chars.next_back() {
-                        let norm_trie = &self.decompositions.trie;
-                        // A boundary is safe iff the character after the
-                        // boundary is a starter that decomposes to self and
-                        // its ce32 is not a prefix ce32 (or the character
-                        // after the boundary is a Hangul syllable) AND the
-                        // character before the boundary decomposes to self
-                        // and its ce32 is not a contraction ce32 that has
-                        // the `CONTRACT_HAS_STARTER` flag set (or the
-                        // character before the boundary is a Hangul syllable).
-                        // Notably, a boundary between a Hangul syllable
-                        // and a conjoining jamo is safe, due to conjoining
-                        // jamo not being able to have prefix or contraction
-                        // ce32.
-                        // Additionally, if the numeric mode is on, and we
-                        // have a numeric ce32 before and after the boundary,
-                        // the boundary is not safe.
-                        let mut head_last_trie_val = norm_trie.get(head_last);
-                        let mut head_last_ce32 = CollationElement32::default();
-                        let data: &CollationData = if let Some(tailoring) = &self.tailoring {
-                            tailoring
-                        } else {
-                            self.root
-                        };
-
-                        let mut left_ce32 = CollationElement32::default();
-                        let mut right_ce32 = CollationElement32::default();
-
-                        // If we get this far, the actual comparison algorithm would
-                        // have to read these values from the trie anyway, so we
-                        // might as well do so eagerly here to simplify subsequent code.
-                        let mut left_trie_val = norm_trie.get(left_different);
-                        let mut right_trie_val = norm_trie.get(right_different);
-
-                        let mut at_good_boundary = false;
-                        // This loop is only broken out of as goto forward. The control flow
-                        // is much more readable this way.
-                        loop {
-                            // The two highest bits are about NFC, which we don't
-                            // care about here. Also mask off the lowest bit to
-                            // combine the check for Hangul syllable.
-                            if (head_last_trie_val
-                                & !(BACKWARD_COMBINING_MARKER | NON_ROUND_TRIP_MARKER | 1))
-                                != 0
-                            {
-                                break;
-                            }
-                            // The last character of the prefix is OK on the normalization
-                            // level. Now let's check its ce32 unless it's a Hangul syllable.
-                            if head_last_trie_val != 1 {
-                                let mut head_last_ce32 = data.ce32_for_char(head_last);
-                                if head_last_ce32 == FALLBACK_CE32 {
-                                    head_last_ce32 = self.root.ce32_for_char(head_last);
-                                    head_last_trie_val = ROOT_FALLBACK_MARKER;
-                                }
-                                if head_last_ce32.tag_checked() == Some(Tag::Contraction)
-                                    && head_last_ce32.at_least_one_suffix_contains_starter()
-                                {
-                                    break;
-                                }
-                            }
-
-                            if (left_trie_val
-                                & !(BACKWARD_COMBINING_MARKER | NON_ROUND_TRIP_MARKER | 1))
-                                != 0
-                            {
-                                break;
-                            }
-                            if (right_trie_val
-                                & !(BACKWARD_COMBINING_MARKER | NON_ROUND_TRIP_MARKER | 1))
-                                != 0
-                            {
-                                break;
-                            }
-                            // The first character of each suffix is OK on the normalization
-                            // level. Now let's check their ce32s unless they are Hangul syllables.
-                            if left_trie_val != 1 {
-                                left_ce32 = data.ce32_for_char(left_different);
-                                if left_ce32 == FALLBACK_CE32 {
-                                    left_ce32 = self.root.ce32_for_char(left_different);
-                                    left_trie_val = ROOT_FALLBACK_MARKER;
-                                }
-                                if left_ce32.tag_checked() == Some(Tag::Prefix) {
-                                    break;
-                                }
-                            }
-                            if right_trie_val != 1 {
-                                right_ce32 = data.ce32_for_char(right_different);
-                                if right_ce32 == FALLBACK_CE32 {
-                                    right_ce32 = self.root.ce32_for_char(right_different);
-                                    right_trie_val = ROOT_FALLBACK_MARKER;
-                                }
-                                if right_ce32.tag_checked() == Some(Tag::Prefix) {
-                                    break;
-                                }
-                            }
-                            if self.options.numeric()
-                                && head_last_ce32.tag_checked() == Some(Tag::Digit)
-                                && (left_ce32.tag_checked() == Some(Tag::Digit)
-                                    || right_ce32.tag_checked() == Some(Tag::Digit))
-                            {
-                                break;
-                            }
-                            // We are at a good boundary!
-                            at_good_boundary = true;
-                            break;
-                        }
-                        loop {
-                            // Prepend to both upcomings
-                            left_upcoming.insert(0, CharacterAndClassAndTrieValueAndCollationElement32::new_with_trie_val_and_ce32(left_different, left_trie_val, left_ce32));
-                            right_upcoming.insert(0, CharacterAndClassAndTrieValueAndCollationElement32::new_with_trie_val_and_ce32(right_different, right_trie_val, right_ce32));
-                            if at_good_boundary {
-                                break 'prefix;
-                            }
-                            // From now on, we'll use the left variables for checks but
-                            // set the right variable to the same values so that the
-                            // insertions to the two different upcoming buffers work.
-
-                            // XXX: rename left_different and right_different
-
-                            left_different = head_last;
-                            right_different = head_last;
-
-                            left_trie_val = head_last_trie_val;
-                            right_trie_val = head_last_trie_val;
-
-                            left_ce32 = head_last_ce32;
-                            right_ce32 = head_last_ce32;
-
-                            // Now take a step back.
-
-                            head_last_ce32 = CollationElement32::default();
-                            head_last = if let Some(head_last) = head_chars.next_back() {
-                                head_last
-                            } else {
-                                // We need to step back beyond the start of the prefix.
-                                // Treat the start of the input is a "good boundary" and
-                                // loop back to put the values we've seen in the upcoming
-                                // buffers.
-                                at_good_boundary = true;
-                                continue;
-                            };
-                            head_last_trie_val = norm_trie.get(head_last);
-
-                            if (head_last_trie_val
-                                & !(BACKWARD_COMBINING_MARKER | NON_ROUND_TRIP_MARKER | 1))
-                                != 0
-                            {
-                                continue;
-                            }
-                            if (left_trie_val
-                                & !(BACKWARD_COMBINING_MARKER | NON_ROUND_TRIP_MARKER | 1))
-                                != 0
-                            {
-                                continue;
-                            }
-                            // The last character of the prefix is OK on the normalization
-                            // level. Now let's check its ce32 unless it's a Hangul syllable.
-                            if head_last_trie_val != 1 {
-                                head_last_ce32 = data.ce32_for_char(head_last);
-                                if head_last_ce32 == FALLBACK_CE32 {
-                                    head_last_ce32 = self.root.ce32_for_char(head_last);
-                                    head_last_trie_val = ROOT_FALLBACK_MARKER;
-                                }
-                                if head_last_ce32.tag_checked() == Some(Tag::Contraction)
-                                    && head_last_ce32.at_least_one_suffix_contains_starter()
-                                {
-                                    continue;
-                                }
-                            }
-                            // Check this _after_ `head_last_ce32` to make sure
-                            // `head_last_ce32` is initialized for the next loop round
-                            // trip if applicable.
-                            if left_trie_val != 1 {
-                                debug_assert_ne!(left_ce32, CollationElement32::default());
-                                if left_ce32.tag_checked() == Some(Tag::Prefix) {
-                                    continue;
-                                }
-                            }
-                            if self.options.numeric()
-                                && head_last_ce32.tag_checked() == Some(Tag::Digit)
-                                && left_ce32.tag_checked() == Some(Tag::Digit)
-                            {
-                                continue;
-                            }
-                            // We are at a good boundary!
-                            at_good_boundary = true;
-                            continue;
-                        }
-                    } else {
-                        // The prefix is empty
-                        // We need to unconsume the left_different and right_different
-                        // characters.
-                        left_chars = left.chars();
-                        right_chars = right.chars();
-                        break 'prefix;
-                    }
-                } else {
-                    // Empty right side
-                    return Ordering::Greater;
-                }
-            } else {
-                // Empty left side
-                if right_tail.is_empty() {
-                    // Also empty right side
-                    return Ordering::Equal;
-                }
-                return Ordering::Less;
-            }
-            // Unreachable line
-        }
-        let ret = self.compare_impl(left_chars, right_chars, left_upcoming, right_upcoming);
-        if self.options.strength() == Strength::Identical && ret == Ordering::Equal {
-            return Decomposition::new(left.chars(), self.decompositions, self.tables).cmp(
-                Decomposition::new(right.chars(), self.decompositions, self.tables),
-            );
-        }
-        ret
-    }
-
     /// Compare guaranteed well-formed UTF-8 slices.
     pub fn compare(&self, left: &str, right: &str) -> Ordering {
         // TODO(#2010): Identical prefix skipping not implemented.
@@ -793,23 +847,24 @@ impl CollatorBorrowed<'_> {
         ret
     }
 
-    /// Compare potentially well-formed UTF-8 slices. Ill-formed input is compared
-    /// as if errors had been replaced with REPLACEMENT CHARACTERs according
-    /// to the WHATWG Encoding Standard.
-    pub fn compare_utf8(&self, left: &[u8], right: &[u8]) -> Ordering {
-        // TODO(#2010): Identical prefix skipping not implemented.
-        let left_upcoming: SmallVec<[CharacterAndClassAndTrieValueAndCollationElement32; 10]> =
-            SmallVec::new();
-        let right_upcoming: SmallVec<[CharacterAndClassAndTrieValueAndCollationElement32; 10]> =
-            SmallVec::new();
-        let ret = self.compare_impl(left.chars(), right.chars(), left_upcoming, right_upcoming);
-        if self.options.strength() == Strength::Identical && ret == Ordering::Equal {
-            return Decomposition::new(left.chars(), self.decompositions, self.tables).cmp(
-                Decomposition::new(right.chars(), self.decompositions, self.tables),
-            );
-        }
-        ret
-    }
+    compare!(
+        /// Compare potentially well-formed UTF-8 slices. Ill-formed input is compared
+        /// as if errors had been replaced with REPLACEMENT CHARACTERs according
+        /// to the WHATWG Encoding Standard.
+        ,
+        compare_utf8,
+        [u8],
+        split_prefix_u8,
+    );
+
+    compare!(
+        /// Compare potentially ill-formed UTF-16 slices. Unpaired surrogates
+        /// are compared as if each one was a REPLACEMENT CHARACTER.
+        ,
+        compare_utf16,
+        [u16],
+        split_prefix_u16,
+    );
 
     fn compare_impl<I: Iterator<Item = char>>(
         &self,
