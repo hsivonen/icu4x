@@ -50,6 +50,25 @@ pub enum TrieType {
     Small = 1,
 }
 
+/// Marker trait for forcing monomorphization per trie type.
+trait TrieTypeMarker {
+    const TRIE_TYPE: TrieType;
+}
+
+/// Request monomorphization for the fast trie type.
+struct FastMarker;
+
+impl TrieTypeMarker for FastMarker {
+    const TRIE_TYPE: TrieType = TrieType::Fast;
+}
+
+/// Request monomorphization for the small trie type.
+struct SmallMarker;
+
+impl TrieTypeMarker for SmallMarker {
+    const TRIE_TYPE: TrieType = TrieType::Small;
+}
+
 // TrieValue trait
 
 // AsULE is AsUnalignedLittleEndian, i.e. "allowed in a zerovec"
@@ -286,12 +305,13 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
         w!((self.data.len() as u32) - ERROR_VALUE_NEG_DATA_OFFSET)
     }
 
-    fn internal_small_index(&self, code_point: u32) -> u32 {
+    #[inline(never)] // `never` based on normalizer benchmarking
+    fn internal_small_index<M: TrieTypeMarker>(&self, code_point: u32) -> u32 {
         // We use wrapping arithmetic here to avoid overflow checks making their way into binaries
         // with overflow checks enabled. Ultimately this code ends up as a checked index, so any
         // bugs here will cause GIGO
         let mut index1_pos: u32 = code_point >> SHIFT_1;
-        if self.header.trie_type == TrieType::Fast {
+        if M::TRIE_TYPE == TrieType::Fast {
             debug_assert!(
                 FAST_TYPE_FAST_INDEXING_MAX < code_point && code_point < self.header.high_start
             );
@@ -356,11 +376,12 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
     /// array. Lookups for code points in the range [`high_start`,
     /// `CODE_POINT_MAX`] are short-circuited to be a single lookup, see
     /// [`CodePointTrieHeader::high_start`].
-    fn small_index(&self, code_point: u32) -> u32 {
+    #[inline(always)]
+    fn small_index<M: TrieTypeMarker>(&self, code_point: u32) -> u32 {
         if code_point >= self.header.high_start {
             w!((self.data.len() as u32) - HIGH_VALUE_NEG_DATA_OFFSET)
         } else {
-            self.internal_small_index(code_point) // helper fn
+            self.internal_small_index::<M>(code_point) // helper fn
         }
     }
 
@@ -402,7 +423,7 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
     /// assert_eq!(0, trie.get32(0x13E0)); // 'Ꮰ' as u32
     /// assert_eq!(1, trie.get32(0x10044)); // '𐁄' as u32
     /// ```
-    #[inline(always)] // `always` based on normalizer benchmarking
+    #[inline(always)] // Inlining is essential for eliminating branches all the way in `get32_ule_typed`
     pub fn get32(&self, code_point: u32) -> T {
         // If we cannot read from the data array, then return the sentinel value
         // self.error_value() for the instance type for T: TrieValue.
@@ -423,7 +444,7 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
     /// assert_eq!(0, trie.get('Ꮰ')); // 'Ꮰ' as u32
     /// assert_eq!(1, trie.get('𐁄')); // '𐁄' as u32
     /// ```
-    #[inline(always)]
+    #[inline(always)] // Inlining is essential for eliminating branches all the way in `get32_ule_typed`
     pub fn get(&self, c: char) -> T {
         self.get32(u32::from(c))
     }
@@ -440,25 +461,84 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
     /// assert_eq!(Some(&0), trie.get32_ule(0x13E0)); // 'Ꮰ' as u32
     /// assert_eq!(Some(&1), trie.get32_ule(0x10044)); // '𐁄' as u32
     /// ```
-    #[inline(always)] // `always` based on normalizer benchmarking
+    #[inline(always)] // Inlining is essential for eliminating branches all the way in `get32_ule_typed`
     pub fn get32_ule(&self, code_point: u32) -> Option<&T::ULE> {
+        if self.header.trie_type == TrieType::Fast {
+            self.get32_ule_typed::<FastMarker>(code_point)
+        } else {
+            self.get32_ule_typed::<SmallMarker>(code_point)
+        }
+    }
+
+    /// Like `get32` but assumes fast trie type.
+    #[inline(always)] // Inlining is essential for eliminating branches all the way in `get32_ule_typed`
+    pub fn get32_fast(&self, code_point: u32) -> T {
+        // If we cannot read from the data array, then return the sentinel value
+        // self.error_value() for the instance type for T: TrieValue.
+        self.get32_ule_fast(code_point)
+            .map(|t| T::from_unaligned(*t))
+            .unwrap_or(self.error_value)
+    }
+
+    /// Like `get32` but assumes small trie type.
+    #[inline(always)] // Inlining is essential for eliminating branches all the way in `get32_ule_typed`
+    pub fn get32_small(&self, code_point: u32) -> T {
+        // If we cannot read from the data array, then return the sentinel value
+        // self.error_value() for the instance type for T: TrieValue.
+        self.get32_ule_small(code_point)
+            .map(|t| T::from_unaligned(*t))
+            .unwrap_or(self.error_value)
+    }
+
+    /// Like `get` but assumes fast trie type.
+    #[inline(always)] // Inlining is essential for eliminating branches all the way in `get32_ule_typed`
+    pub fn get_fast(&self, c: char) -> T {
+        self.get32_fast(u32::from(c))
+    }
+
+    /// Like `get` but assumes small trie type.
+    #[inline(always)] // Inlining is essential for eliminating branches all the way in `get32_ule_typed`
+    pub fn get_small(&self, c: char) -> T {
+        self.get32_small(u32::from(c))
+    }
+
+    /// Like `get32_ule` but assumes fast trie type.
+    #[inline(always)] // Inlining is essential for eliminating branches all the way in `get32_ule_typed`
+    pub fn get32_ule_fast(&self, code_point: u32) -> Option<&T::ULE> {
+        self.get32_ule_typed::<FastMarker>(code_point)
+    }
+
+    /// Like `get32_ule` but assumes small trie type.
+    #[inline(always)] // Inlining is essential for eliminating branches all the way in `get32_ule_typed`
+    pub fn get32_ule_small(&self, code_point: u32) -> Option<&T::ULE> {
+        self.get32_ule_typed::<SmallMarker>(code_point)
+    }
+
+    #[inline(always)] // Inlining is essential for branch elimination.
+    fn get32_ule_typed<M: TrieTypeMarker>(&self, code_point: u32) -> Option<&T::ULE> {
         // All code points up to the fast max limit are represented
         // individually in the `index` array to hold their `data` array position, and
         // thus only need 2 lookups for a [CodePointTrie::get()](`crate::codepointtrie::CodePointTrie::get`).
         // Code points above the "fast max" limit require 4 lookups.
-        let fast_max = match self.header.trie_type {
+        let fast_max = match M::TRIE_TYPE {
             TrieType::Fast => FAST_TYPE_FAST_INDEXING_MAX,
             TrieType::Small => SMALL_TYPE_FAST_INDEXING_MAX,
         };
         let data_pos: u32 = if code_point <= fast_max {
             Self::fast_index(self, code_point)
         } else if code_point <= CODE_POINT_MAX {
-            Self::small_index(self, code_point)
+            Self::small_index::<M>(self, code_point)
         } else {
             self.trie_error_val_index()
         };
         // Returns the trie value (or trie's error value).
         self.data.as_ule_slice().get(data_pos as usize)
+    }
+
+
+    #[inline(always)]
+    pub fn is_fast(&self) -> bool {
+        self.header.trie_type == TrieType::Fast
     }
 
     /// Converts the [`CodePointTrie`] into one that returns another type of the same size.
@@ -600,6 +680,14 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
     /// assert_eq!(submaximal_2.value, start_val);
     /// ```
     pub fn get_range(&self, start: u32) -> Option<CodePointMapRange<T>> {
+        if self.header.trie_type == TrieType::Fast {
+            self.get_range_typed::<FastMarker>(start)
+        } else {
+            self.get_range_typed::<SmallMarker>(start)
+        }
+    }
+
+    fn get_range_typed<M: TrieTypeMarker>(&self, start: u32) -> Option<CodePointMapRange<T>> {
         // Exit early if the start code point is out of range, or if it is
         // in the last range of code points in high_start..=CODE_POINT_MAX
         // (start- and end-inclusive) that all share the same trie value.
@@ -643,11 +731,11 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
             // into the `data` array). So for convenience's sake, when we have the
             // 2-stage lookup, reuse the "i3*" variable names for the first lookup.
             if c <= 0xffff
-                && (self.header.trie_type == TrieType::Fast || c <= SMALL_TYPE_FAST_INDEXING_MAX)
+                && (M::TRIE_TYPE == TrieType::Fast || c <= SMALL_TYPE_FAST_INDEXING_MAX)
             {
                 i3_block = 0;
                 i3 = c >> FAST_TYPE_SHIFT;
-                i3_block_length = if self.header.trie_type == TrieType::Fast {
+                i3_block_length = if M::TRIE_TYPE == TrieType::Fast {
                     BMP_INDEX_LENGTH
                 } else {
                     SMALL_INDEX_LENGTH
@@ -656,7 +744,7 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
             } else {
                 // Use the multi-stage index.
                 let mut i1: u32 = c >> SHIFT_1;
-                if self.header.trie_type == TrieType::Fast {
+                if M::TRIE_TYPE == TrieType::Fast {
                     debug_assert!(0xffff < c && c < self.header.high_start);
                     i1 = i1 + BMP_INDEX_LENGTH - OMITTED_BMP_INDEX_1_LENGTH;
                 } else {

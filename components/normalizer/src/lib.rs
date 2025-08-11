@@ -1,7 +1,7 @@
 // This file is part of ICU4X. For terms of use, please see the file
 // called LICENSE at the top level of the ICU4X source tree
 // (online at: https://github.com/unicode-org/icu4x/blob/main/LICENSE ).
-
+#![feature(likely_unlikely)]
 // https://github.com/unicode-org/icu4x/blob/main/documents/process/boilerplate.md#library-annotations
 #![cfg_attr(not(any(test, doc)), no_std)]
 #![cfg_attr(
@@ -59,6 +59,9 @@
 //! ```
 
 extern crate alloc;
+
+/// Set to `true` to remove support for the small trie type.
+const ONLY_FAST_TRIE: bool = false;
 
 // We don't depend on icu_properties to minimize deps, but we want to be able
 // to ensure we're using the right CCC values
@@ -466,8 +469,14 @@ impl CharacterAndClass {
             return;
         }
         let scalar = self.0 & 0xFFFFFF;
-        self.0 =
-            ((ccc_from_trie_value(trie.get32_u32(scalar)).to_icu4c_value() as u32) << 24) | scalar;
+        self.0 = ((ccc_from_trie_value(if ONLY_FAST_TRIE {
+            trie.get32_fast(scalar)
+        } else {
+            trie.get32(scalar)
+        })
+        .to_icu4c_value() as u32)
+            << 24)
+            | scalar;
     }
 }
 
@@ -620,7 +629,11 @@ where
             let mut combining_start = 0;
             for u in tail.iter() {
                 let ch = char_from_u16(u);
-                let trie_value = self.trie.get(ch);
+                let trie_value = if ONLY_FAST_TRIE {
+                    self.trie.get_fast(ch)
+                } else {
+                    self.trie.get(ch)
+                };
                 self.buffer.push(CharacterAndClass::new_with_trie_value(
                     CharacterAndTrieValue::new(ch, trie_value),
                 ));
@@ -659,7 +672,11 @@ where
             let mut i = 0;
             let mut combining_start = 0;
             for ch in tail.iter() {
-                let trie_value = self.trie.get(ch);
+                let trie_value = if ONLY_FAST_TRIE {
+                    self.trie.get_fast(ch)
+                } else {
+                    self.trie.get(ch)
+                };
                 self.buffer.push(CharacterAndClass::new_with_trie_value(
                     CharacterAndTrieValue::new(ch, trie_value),
                 ));
@@ -676,7 +693,24 @@ where
 
     #[inline(always)]
     fn attach_trie_value(&self, c: char) -> CharacterAndTrieValue {
-        CharacterAndTrieValue::new(c, self.trie.get(c))
+        CharacterAndTrieValue::new(
+            c,
+            if ONLY_FAST_TRIE {
+                self.trie.get_fast(c)
+            } else {
+                self.trie.get(c)
+            },
+        )
+    }
+
+    #[inline(always)]
+    fn attach_trie_value_fast(&self, c: char) -> CharacterAndTrieValue {
+        CharacterAndTrieValue::new(c, self.trie.get_fast(c))
+    }
+
+    #[inline(always)]
+    fn attach_trie_value_small(&self, c: char) -> CharacterAndTrieValue {
+        CharacterAndTrieValue::new(c, self.trie.get_small(c))
     }
 
     fn delegate_next_no_pending(&mut self) -> Option<CharacterAndTrieValue> {
@@ -689,7 +723,11 @@ where
                 return Some(CharacterAndTrieValue::new(c, 0));
             }
 
-            let trie_val = self.trie.get(c);
+            let trie_val = if ONLY_FAST_TRIE {
+                self.trie.get_fast(c)
+            } else {
+                self.trie.get(c)
+            };
             // TODO: Can we do something better about the cost of this branch in the
             // non-UTS 46 case?
             if trie_val == IGNORABLE_MARKER {
@@ -1216,6 +1254,7 @@ macro_rules! composing_normalize_to {
      $undecomposed_starter:ident,
      $pending_slice:ident,
      $len_utf:ident,
+     $fast_trie:ident,
     ) => {
         $(#[$meta])*
         pub fn $normalize_to<W: $write + ?Sized>(
@@ -1253,7 +1292,13 @@ macro_rules! composing_normalize_to {
                         // 2. Leave a starter with its trie value in `$undecomposed_starter`
                         //    and, if there is still more input, leave the next character
                         //    and its trie value in `$composition.decomposition.pending`.
-                        $fast
+                        if ONLY_FAST_TRIE || $composition.decomposition.trie.is_fast() {
+                            const $fast_trie: bool = true;
+                            $fast
+                        } else {
+                            const $fast_trie: bool = false;
+                            $fast
+                        }
                     }
                 }
                 // Fast track above, full algorithm below
@@ -1400,6 +1445,7 @@ macro_rules! decomposing_normalize_to {
      $undecomposed_starter:ident,
      $pending_slice:ident,
      $outer:lifetime, // loop labels use lifetime tokens
+     $fast_trie: ident,
     ) => {
         $(#[$meta])*
         pub fn $normalize_to<W: $write + ?Sized>(
@@ -1430,7 +1476,13 @@ macro_rules! decomposing_normalize_to {
                     $sink.write_char($undecomposed_starter.character)?;
 
                     let $pending_slice = $decomposition.delegate.$as_slice();
-                    $fast
+                    if ONLY_FAST_TRIE || $decomposition.trie.is_fast() {
+                        const $fast_trie: bool = true;
+                        $fast
+                    } else {
+                        const $fast_trie: bool = false;
+                        $fast
+                    }
                 }
                 let starter = $decomposition.decomposing_next($undecomposed_starter);
                 $sink.write_char(starter)?;
@@ -1822,7 +1874,11 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                 // `unwrap()` OK, because the slice is valid UTF-8 and we know there
                 // is an upcoming byte.
                 let upcoming = decomposition.delegate.next().unwrap();
-                let upcoming_with_trie_value = decomposition.attach_trie_value(upcoming);
+                let upcoming_with_trie_value = if FAST_TRIE {
+                    decomposition.attach_trie_value_fast(upcoming)
+                } else {
+                    decomposition.attach_trie_value_small(upcoming)
+                };
                 if upcoming_with_trie_value.starter_and_decomposes_to_self() {
                     continue 'fast;
                 }
@@ -1853,6 +1909,7 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
         undecomposed_starter,
         pending_slice,
         'outer,
+        FAST_TRIE,
     );
 
     decomposing_normalize_to!(
@@ -1893,7 +1950,11 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                 // is an upcoming byte.
                 #[expect(clippy::unwrap_used)]
                 let upcoming = decomposition.delegate.next().unwrap();
-                let upcoming_with_trie_value = decomposition.attach_trie_value(upcoming);
+                let upcoming_with_trie_value = if FAST_TRIE {
+                    decomposition.attach_trie_value_fast(upcoming)
+                } else {
+                    decomposition.attach_trie_value_small(upcoming)
+                };
                 if upcoming_with_trie_value.starter_and_decomposes_to_self_except_replacement() {
                     // Note: The trie value of the REPLACEMENT CHARACTER is
                     // intentionally formatted to fail the
@@ -1953,6 +2014,7 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
         undecomposed_starter,
         pending_slice,
         'outer,
+        FAST_TRIE,
     );
 
     decomposing_normalize_to!(
@@ -2003,7 +2065,11 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                         }
                         // We might be doing a trie lookup by surrogate. Surrogates get
                         // a decomposition to U+FFFD.
-                        let mut trie_value = decomposition.trie.get32(upcoming32);
+                        let mut trie_value = if FAST_TRIE {
+                            decomposition.trie.get32_fast(upcoming32)
+                        } else {
+                            decomposition.trie.get32_small(upcoming32)
+                        };
                         if starter_and_decomposes_to_self_impl(trie_value) {
                             continue 'fast;
                         }
@@ -2033,7 +2099,11 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                                         upcoming32 = (upcoming32 << 10) + u32::from(low)
                                             - (((0xD800u32 << 10) - 0x10000u32) + 0xDC00u32);
                                         // Successfully-paired surrogate. Read from the trie again.
-                                        trie_value = decomposition.trie.get32(upcoming32);
+                                        trie_value = if FAST_TRIE {
+                                            decomposition.trie.get32_fast(upcoming32)
+                                        } else {
+                                            decomposition.trie.get32_small(upcoming32)
+                                        };
                                         if starter_and_decomposes_to_self_impl(trie_value) {
                                             continue 'fast;
                                         }
@@ -2103,6 +2173,7 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
         undecomposed_starter,
         pending_slice,
         'outer,
+        FAST_TRIE,
     );
 }
 
@@ -2452,7 +2523,11 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                 // `unwrap()` OK, because the slice is valid UTF-8 and we know there
                 // is an upcoming byte.
                 let upcoming = composition.decomposition.delegate.next().unwrap();
-                let upcoming_with_trie_value = composition.decomposition.attach_trie_value(upcoming);
+                let upcoming_with_trie_value = if FAST_TRIE {
+                    composition.decomposition.attach_trie_value_fast(upcoming)
+                } else {
+                    composition.decomposition.attach_trie_value_small(upcoming)
+                };
                 if upcoming_with_trie_value.potential_passthrough_and_cannot_combine_backwards() {
                     // Can't combine backwards, hence a plain (non-backwards-combining)
                     // starter albeit past `composition_passthrough_bound`
@@ -2479,6 +2554,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
         undecomposed_starter,
         pending_slice,
         len_utf8,
+        FAST_TRIE,
     );
 
     composing_normalize_to!(
@@ -2503,8 +2579,11 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                         // Fast-track succeeded!
                         continue 'fast;
                     }
-                    // TODO: Be statically aware of fast/small trie.
-                    let upcoming_with_trie_value = composition.decomposition.attach_trie_value(upcoming);
+                    let upcoming_with_trie_value = if FAST_TRIE {
+                        composition.decomposition.attach_trie_value_fast(upcoming)
+                    } else {
+                        composition.decomposition.attach_trie_value_small(upcoming)
+                    };
                     if upcoming_with_trie_value.potential_passthrough_and_cannot_combine_backwards() {
                         // Note: The trie value of the REPLACEMENT CHARACTER is
                         // intentionally formatted to fail the
@@ -2565,6 +2644,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
         undecomposed_starter,
         pending_slice,
         len_utf8,
+        FAST_TRIE,
     );
 
     composing_normalize_to!(
@@ -2616,7 +2696,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                         ptr = unsafe { ptr.add(1) };
 
                         upcoming32 = u32::from(upcoming_code_unit); // may be surrogate
-                        if upcoming32 < composition_passthrough_bound {
+                        if core::hint::likely(upcoming32 < composition_passthrough_bound) {
                             // No need for surrogate or U+FFFD check, because
                             // `composition_passthrough_bound` cannot be higher than
                             // U+0300.
@@ -2629,7 +2709,11 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                         }
                         // We might be doing a trie lookup by surrogate. Surrogates get
                         // a decomposition to U+FFFD.
-                        trie_value = composition.decomposition.trie.get32(upcoming32);
+                        trie_value = if FAST_TRIE {
+                            composition.decomposition.trie.get32_fast(upcoming32)
+                        } else {
+                            composition.decomposition.trie.get32_small(upcoming32)
+                        };
                         if potential_passthrough_and_cannot_combine_backwards_impl(trie_value) {
                             // Can't combine backwards, hence a plain (non-backwards-combining)
                             // starter albeit past `composition_passthrough_bound`
@@ -2664,7 +2748,11 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                                         upcoming32 = (upcoming32 << 10) + u32::from(low)
                                             - (((0xD800u32 << 10) - 0x10000u32) + 0xDC00u32);
                                         // Successfully-paired surrogate. Read from the trie again.
-                                        trie_value = composition.decomposition.trie.get32(upcoming32);
+                                        trie_value = if FAST_TRIE {
+                                            composition.decomposition.trie.get32_fast(upcoming32)
+                                        } else {
+                                            composition.decomposition.trie.get32_small(upcoming32)
+                                        };
                                         if potential_passthrough_and_cannot_combine_backwards_impl(trie_value) {
                                             // Fast-track succeeded!
                                             continue 'fast;
@@ -2733,6 +2821,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
         undecomposed_starter,
         pending_slice,
         len_utf16,
+        FAST_TRIE,
     );
 }
 
