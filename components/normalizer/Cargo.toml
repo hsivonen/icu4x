@@ -59,6 +59,8 @@ icu_properties = ["dep:icu_properties"]
 utf16_iter = ["dep:utf16_iter", "write16"]
 # For dealing with potentially ill-formed UTF8 strings
 utf8_iter = ["dep:utf8_iter"]
+# Removes support for the small trie type for the main normalizer data trie
+unstable_fast_trie_only = []
 
 [[bench]]
 name = "bench"

@@ -336,12 +336,12 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
         w!((self.data.len() as u32) - ERROR_VALUE_NEG_DATA_OFFSET)
     }
 
-    fn internal_small_index(&self, code_point: u32) -> u32 {
+    fn internal_small_index<M: TypedCodePointTrie<'trie, T> + ?Sized>(&self, code_point: u32) -> u32 {
         // We use wrapping arithmetic here to avoid overflow checks making their way into binaries
         // with overflow checks enabled. Ultimately this code ends up as a checked index, so any
         // bugs here will cause GIGO
         let mut index1_pos: u32 = code_point >> SHIFT_1;
-        if self.header.trie_type == TrieType::Fast {
+        if M::TRIE_TYPE == TrieType::Fast {
             debug_assert!(
                 FAST_TYPE_FAST_INDEXING_MAX < code_point && code_point < self.header.high_start
             );
@@ -410,7 +410,32 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
         if code_point >= self.header.high_start {
             w!((self.data.len() as u32) - HIGH_VALUE_NEG_DATA_OFFSET)
         } else {
-            self.internal_small_index(code_point) // helper fn
+            match self.header.trie_type {
+                TrieType::Fast => {
+                    self.internal_small_index::<FastCodePointTrie<'trie, T>>(code_point) // helper fn
+                },
+                TrieType::Small => {
+                    self.internal_small_index::<SmallCodePointTrie<'trie, T>>(code_point) // helper fn
+                },
+            }
+        }
+    }
+
+    /// Returns the position in the `data` array for the given code point,
+    /// where this code point is at or above the fast limit associated for the
+    /// `trie_type`. We will refer to that limit as "`fastMax`" here.
+    ///
+    /// A lookup of the value in the code point trie for a code point in the
+    /// code point space range [`fastMax`, `high_start`) will be a 4-step
+    /// lookup: 3 lookups in the `index` array and one lookup in the `data`
+    /// array. Lookups for code points in the range [`high_start`,
+    /// `CODE_POINT_MAX`] are short-circuited to be a single lookup, see
+    /// [`CodePointTrieHeader::high_start`].
+    fn small_index_typed<M: TypedCodePointTrie<'trie, T> + ?Sized>(&self, code_point: u32) -> u32 {
+        if code_point >= self.header.high_start {
+            w!((self.data.len() as u32) - HIGH_VALUE_NEG_DATA_OFFSET)
+        } else {
+            self.internal_small_index::<M>(code_point) // helper fn
         }
     }
 
@@ -508,6 +533,32 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
             .unwrap_or(self.error_value)
     }
 
+    /// Returns the value that is associated with `code_point` in this [`CodePointTrie`]
+    /// assuming that the small index path should be used.
+    ///
+    /// `code_point` must be at most `CODE_POINT_MAX` AND greter than
+    /// `FAST_TYPE_FAST_INDEXING_MAX` if the trie type is fast or greater
+    /// than `SMALL_TYPE_FAST_INDEXING_MAX` if the trie type is small.
+    /// This is checked when debug assertions are enabled. If this
+    /// precondition is violated, the behavior of this method is
+    /// memory-safe, but the returned value may be bogus (not
+    /// necessarily the designated error value).
+    #[inline(never)]
+    #[cold]
+    fn get32_by_small_index_typed<M: TypedCodePointTrie<'trie, T> + ?Sized>(&self, code_point: u32) -> T {
+        debug_assert!(code_point <= CODE_POINT_MAX);
+        debug_assert!(
+            code_point
+                > match self.header.trie_type {
+                    TrieType::Fast => FAST_TYPE_FAST_INDEXING_MAX,
+                    TrieType::Small => SMALL_TYPE_FAST_INDEXING_MAX,
+                }
+        );
+        self.data
+            .get(self.small_index_typed::<M>(code_point) as usize)
+            .unwrap_or(self.error_value)
+    }
+
     /// Returns the value that is associated with `code_point` in this [`CodePointTrie`].
     ///
     /// # Examples
@@ -532,6 +583,35 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
             unsafe { self.get32_by_fast_index(code_point) }
         } else if code_point <= CODE_POINT_MAX {
             self.get32_by_small_index(code_point)
+        } else {
+            self.error_value
+        }
+    }
+
+    /// Returns the value that is associated with `code_point` in this [`CodePointTrie`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use icu::collections::codepointtrie::planes;
+    /// let trie = planes::get_planes_trie();
+    ///
+    /// assert_eq!(0, trie.get32(0x41)); // 'A' as u32
+    /// assert_eq!(0, trie.get32(0x13E0)); // 'Ꮰ' as u32
+    /// assert_eq!(1, trie.get32(0x10044)); // '𐁄' as u32
+    /// ```
+    #[inline(always)] // `always` based on normalizer benchmarking
+    fn get32_typed<M: TypedCodePointTrie<'trie, T> + ?Sized>(&self, code_point: u32) -> T {
+        let fast_max = match M::TRIE_TYPE {
+            TrieType::Fast => FAST_TYPE_FAST_INDEXING_MAX,
+            TrieType::Small => SMALL_TYPE_FAST_INDEXING_MAX,
+        };
+        if code_point <= fast_max {
+            // SAFETY: We've just checked that `code_point` satisfies
+            // the precondition of `get32_by_fast_index`.
+            unsafe { self.get32_by_fast_index(code_point) }
+        } else if code_point <= CODE_POINT_MAX {
+            self.get32_by_small_index_typed::<M>(code_point)
         } else {
             self.error_value
         }
@@ -569,6 +649,110 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
         }
     }
 
+    /// Returns the value that is associated with `char` in this [`CodePointTrie`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use icu::collections::codepointtrie::planes;
+    /// let trie = planes::get_planes_trie();
+    ///
+    /// assert_eq!(0, trie.get('A')); // 'A' as u32
+    /// assert_eq!(0, trie.get('Ꮰ')); // 'Ꮰ' as u32
+    /// assert_eq!(1, trie.get('𐁄')); // '𐁄' as u32
+    /// ```
+    #[inline(always)]
+    pub fn get_typed<M: TypedCodePointTrie<'trie, T> + ?Sized>(&self, c: char) -> T {
+        // If we just delegated to `get32` here, the compiler should
+        // eliminate the `code_point <= CODE_POINT_MAX` check, but
+        // let's manually inline here to make sure that the unnecessary
+        // check isn't performed.
+        let code_point = u32::from(c);
+        let fast_max = match M::TRIE_TYPE {
+            TrieType::Fast => FAST_TYPE_FAST_INDEXING_MAX,
+            TrieType::Small => SMALL_TYPE_FAST_INDEXING_MAX,
+        };
+        if code_point <= fast_max {
+            // SAFETY: We've just checked that `code_point` satisfies
+            // the precondition of `get32_by_fast_index`.
+            unsafe { self.get32_by_fast_index(code_point) }
+        } else {
+            self.get32_by_small_index_typed::<M>(code_point)
+        }
+    }
+
+    /// Returns the value that is associated with `u16` (BMP, including
+    /// surrogates) in this [`CodePointTrie`].
+    #[inline(always)]
+    pub fn get16(&self, bmp: u16) -> T {
+        // If we just delegated to `get32` here with the expectation
+        // the branches inside the `get32` get eliminated due to the
+        // possible value range of `u16`, branch prediction in the
+        // caller is messed up! Perhaps this is due to the relative
+        // order of the relevant optimization passes?
+        let code_point = u32::from(bmp);
+        let fast_max = match self.header.trie_type {
+            TrieType::Fast => FAST_TYPE_FAST_INDEXING_MAX,
+            TrieType::Small => SMALL_TYPE_FAST_INDEXING_MAX,
+        };
+        if code_point <= fast_max {
+            // SAFETY: We've just checked that `code_point` satisfies
+            // the precondition of `get32_by_fast_index`.
+            unsafe { self.get32_by_fast_index(code_point) }
+        } else {
+            self.get32_by_small_index(code_point)
+        }
+    }
+
+    /// Returns the value that is associated with `u16` (BMP, including
+    /// surrogates) in this [`CodePointTrie`].
+    #[inline(always)]
+    fn get16_typed<M: TypedCodePointTrie<'trie, T> + ?Sized>(&self, bmp: u16) -> T {
+        // If we just delegated to `get32` here with the expectation
+        // the branches inside the `get32` get eliminated due to the
+        // possible value range of `u16`, branch prediction in the
+        // caller is messed up! Perhaps this is due to the relative
+        // order of the relevant optimization passes?
+        let code_point = u32::from(bmp);
+        let fast_max = match M::TRIE_TYPE {
+            TrieType::Fast => FAST_TYPE_FAST_INDEXING_MAX,
+            TrieType::Small => SMALL_TYPE_FAST_INDEXING_MAX,
+        };
+        if code_point <= fast_max {
+            // SAFETY: We've just checked that `code_point` satisfies
+            // the precondition of `get32_by_fast_index`.
+            unsafe { self.get32_by_fast_index(code_point) }
+        } else {
+            self.get32_by_small_index_typed::<M>(code_point)
+        }
+    }
+
+    /// Returns the value that is associated with a non-BMP code point
+    /// in this [`CodePointTrie`].
+    ///
+    /// If the argument is not actually a supplementary code point,
+    /// something memory-safe happens, but the return value may be bogus
+    /// (not necessarily the designated error value).
+    #[inline(always)]
+    pub fn get_supplementary(&self, supplementary: u32) -> T {
+        debug_assert!(supplementary > 0xFFFF);
+        debug_assert!(supplementary <= CODE_POINT_MAX);
+        self.get32_by_small_index(supplementary)
+    }
+
+    /// Returns the value that is associated with a non-BMP code point
+    /// in this [`CodePointTrie`].
+    ///
+    /// If the argument is not actually a supplementary code point,
+    /// something memory-safe happens, but the return value may be bogus
+    /// (not necessarily the designated error value).
+    #[inline(always)]
+    pub fn get_supplementary_typed<M: TypedCodePointTrie<'trie, T> + ?Sized>(&self, supplementary: u32) -> T {
+        debug_assert!(supplementary > 0xFFFF);
+        debug_assert!(supplementary <= CODE_POINT_MAX);
+        self.get32_by_small_index_typed::<M>(supplementary)
+    }
+
     /// Returns a reference to the ULE of the value that is associated with `code_point` in this [`CodePointTrie`].
     ///
     /// # Examples
@@ -600,6 +784,37 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
         };
         // Returns the trie value (or trie's error value).
         self.data.as_ule_slice().get(data_pos as usize)
+    }
+
+    /// Turns this trie into a version whose trie type is encoded in the Rust type.
+    #[inline]
+    pub fn to_typed(self) -> Typed<FastCodePointTrie<'trie, T>, SmallCodePointTrie<'trie, T>> {
+        match self.header.trie_type {
+            TrieType::Fast => Typed::Fast(FastCodePointTrie { inner: self }),
+            TrieType::Small => Typed::Small(SmallCodePointTrie { inner: self }),
+        }
+    }
+
+    /// Obtains a reference to this trie as a Rust type that encodes the trie type in the Rust type.
+    #[inline]
+    pub fn as_typed_ref(
+        &self,
+    ) -> Typed<&FastCodePointTrie<'trie, T>, &SmallCodePointTrie<'trie, T>> {
+        // SAFETY: `FastCodePointTrie` and `SmallCodePointTrie` are `repr(transparent)`
+        // with `CodePointTrie`, so transmuting between the references is OK when the
+        // actual trie type agrees with the semantics of the typed wrapper.
+        match self.header.trie_type {
+            TrieType::Fast => Typed::Fast(unsafe {
+                core::mem::transmute::<&CodePointTrie<'trie, T>, &FastCodePointTrie<'trie, T>>(
+                    &self,
+                )
+            }),
+            TrieType::Small => Typed::Small(unsafe {
+                core::mem::transmute::<&CodePointTrie<'trie, T>, &SmallCodePointTrie<'trie, T>>(
+                    &self,
+                )
+            }),
+        }
     }
 
     /// Converts the [`CodePointTrie`] into one that returns another type of the same size.
@@ -1277,6 +1492,108 @@ impl<T: TrieValue> Iterator for CodePointMapRangeIterator<'_, T> {
         // Note: Clone is cheap. We can't Copy because RangeInclusive does not impl Copy.
         self.cpm_range.clone()
     }
+}
+
+// XXX this trait should be sealed
+
+/// Trait for writing trait bounds for monomorphizing over either
+/// `FastCodePointTrie` or `SmallCodePointTrie`.
+pub trait TypedCodePointTrie<'trie, T: TrieValue> {
+    /// The `TrieType` associated with this `TypedCodePointTrie`
+    const TRIE_TYPE: TrieType;
+
+    /// Lookup trie value as `u32` by Unicode Scalar Value without branching on trie type.
+    #[inline(always)]
+    fn get32_u32(&self, code_point: u32) -> u32 {
+        self.get32(code_point).to_u32()
+    }
+
+    /// Lookup trie value by Basic Multilingual Plane Code Point without branching on trie type.
+    #[inline(always)]
+    fn get16(&self, bmp: u16) -> T {
+        self.as_untyped_ref().get16_typed::<Self>(bmp)
+    }
+
+    /// Lookup trie value by non-Basic Multilingual Plane Scalar Value without branching on trie type.
+    #[inline(always)]
+    fn get_supplementary(&self, supplementary: u32) -> T {
+        self.as_untyped_ref().get_supplementary_typed::<Self>(supplementary)
+    }
+
+    /// Lookup trie value by Unicode Scalar Value without branching on trie type.
+    #[inline(always)]
+    fn get(&self, c: char) -> T {
+        self.as_untyped_ref().get_typed::<Self>(c)
+    }
+
+    /// Lookup trie value by Unicode Code Point without branching on trie type.
+    #[inline(always)]
+    fn get32(&self, code_point: u32) -> T {
+        self.as_untyped_ref().get32_typed::<Self>(code_point)
+    }
+
+    /// Returns a reference to the wrapped `CodePointTrie`.
+    fn as_untyped_ref(&self) -> &CodePointTrie<'trie, T>;
+
+    /// Extracts the wrapped `CodePointTrie`.
+    fn to_untyped(self) -> CodePointTrie<'trie, T>;
+}
+
+/// Type-safe wrapper for a fast trie guaranteeing
+/// the the getters don't branch on the trie type.
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct FastCodePointTrie<'trie, T: TrieValue> {
+    inner: CodePointTrie<'trie, T>,
+}
+
+impl<'trie, T: TrieValue> TypedCodePointTrie<'trie, T> for FastCodePointTrie<'trie, T> {
+    const TRIE_TYPE: TrieType = TrieType::Fast;
+
+    /// Returns a reference to the wrapped `CodePointTrie`.
+    #[inline(always)]
+    fn as_untyped_ref(&self) -> &CodePointTrie<'trie, T> {
+        &self.inner
+    }
+
+    /// Extracts the wrapped `CodePointTrie`.
+    #[inline(always)]
+    fn to_untyped(self) -> CodePointTrie<'trie, T> {
+        self.inner
+    }
+}
+
+/// Type-safe wrapper for a small trie guaranteeing
+/// the the getters don't branch on the trie type.
+#[derive(Debug)]
+#[repr(transparent)]
+pub struct SmallCodePointTrie<'trie, T: TrieValue> {
+    inner: CodePointTrie<'trie, T>,
+}
+
+impl<'trie, T: TrieValue> TypedCodePointTrie<'trie, T> for SmallCodePointTrie<'trie, T> {
+    const TRIE_TYPE: TrieType = TrieType::Small;
+
+    /// Returns a reference to the wrapped `CodePointTrie`.
+    #[inline(always)]
+    fn as_untyped_ref(&self) -> &CodePointTrie<'trie, T> {
+        &self.inner
+    }
+
+    /// Extracts the wrapped `CodePointTrie`.
+    #[inline(always)]
+    fn to_untyped(self) -> CodePointTrie<'trie, T> {
+        self.inner
+    }
+}
+
+/// Holder for either fast or small trie with the trie
+/// type encoded into the Rust type.
+pub enum Typed<F, S> {
+    /// The trie type is fast.
+    Fast(F),
+    /// The trie type is small.
+    Small(S),
 }
 
 #[cfg(test)]

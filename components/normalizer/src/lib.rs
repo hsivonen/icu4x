@@ -60,6 +60,29 @@
 
 extern crate alloc;
 
+#[cfg(not(feature = "unstable_fast_trie_only"))]
+type Trie<'trie> = CodePointTrie<'trie, u32>;
+
+#[cfg(feature = "unstable_fast_trie_only")]
+type Trie<'trie> = FastCodePointTrie<'trie, u32>;
+
+#[cfg(not(feature = "unstable_fast_trie_only"))]
+fn trie_from_untyped<'a, 'b>(cpt: &'a CodePointTrie<'b, u32>) -> &'a Trie<'b> {
+    cpt
+}
+
+#[cfg(feature = "unstable_fast_trie_only")]
+fn trie_from_untyped<'a, 'b>(cpt: &'a CodePointTrie<'b, u32>) -> &'a Trie<'b> {
+    match cpt.as_typed_ref() {
+        Typed::Fast(typed) => {
+            typed
+        },
+        Typed::Small(_) => {
+            unreachable!("Small trie type not supported");
+        },
+    }
+}
+
 // We don't depend on icu_properties to minimize deps, but we want to be able
 // to ensure we're using the right CCC values
 macro_rules! ccc {
@@ -90,6 +113,12 @@ use icu_collections::char16trie::Char16Trie;
 use icu_collections::char16trie::Char16TrieIterator;
 use icu_collections::char16trie::TrieResult;
 use icu_collections::codepointtrie::CodePointTrie;
+#[cfg(feature = "unstable_fast_trie_only")]
+use icu_collections::codepointtrie::FastCodePointTrie;
+#[cfg(feature = "unstable_fast_trie_only")]
+use icu_collections::codepointtrie::TypedCodePointTrie;
+#[cfg(feature = "unstable_fast_trie_only")]
+use icu_collections::codepointtrie::Typed;
 #[cfg(feature = "icu_properties")]
 use icu_properties::props::CanonicalCombiningClass;
 use icu_provider::prelude::*;
@@ -461,7 +490,7 @@ impl CharacterAndClass {
     pub fn character_and_ccc(&self) -> (char, CanonicalCombiningClass) {
         (self.character(), self.ccc())
     }
-    pub fn set_ccc_from_trie_if_not_already_set(&mut self, trie: &CodePointTrie<u32>) {
+    pub fn set_ccc_from_trie_if_not_already_set(&mut self, trie: &Trie) {
         if self.0 >> 24 != 0xFF {
             return;
         }
@@ -473,7 +502,7 @@ impl CharacterAndClass {
 
 // This function exists as a borrow check helper.
 #[inline(always)]
-fn sort_slice_by_ccc(slice: &mut [CharacterAndClass], trie: &CodePointTrie<u32>) {
+fn sort_slice_by_ccc(slice: &mut [CharacterAndClass], trie: &Trie) {
     // We don't look up the canonical combining class for starters
     // of for single combining characters between starters. When
     // there's more than one combining character between starters,
@@ -507,7 +536,7 @@ where
     // may become a non-starter before `decomposing_next()` is called.
     pending: Option<CharacterAndTrieValue>, // None at end of stream
     // See trie-value-format.md
-    trie: &'data CodePointTrie<'data, u32>,
+    trie: &'data Trie<'data>,
     scalars16: &'data ZeroSlice<u16>,
     scalars24: &'data ZeroSlice<char>,
     supplementary_scalars16: &'data ZeroSlice<u16>,
@@ -570,7 +599,7 @@ where
             // Initialize with a placeholder starter in case
             // the real stream starts with a non-starter.
             pending: Some(CharacterAndTrieValue::new('\u{FFFF}', 0)),
-            trie: &decompositions.trie,
+            trie: trie_from_untyped(&decompositions.trie),
             scalars16: &tables.scalars16,
             scalars24: &tables.scalars24,
             supplementary_scalars16: if let Some(supplementary) = supplementary_tables {
@@ -2003,7 +2032,7 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                         }
                         // We might be doing a trie lookup by surrogate. Surrogates get
                         // a decomposition to U+FFFD.
-                        let mut trie_value = decomposition.trie.get32(upcoming32);
+                        let mut trie_value = decomposition.trie.get16(upcoming_code_unit);
                         if starter_and_decomposes_to_self_impl(trie_value) {
                             continue 'fast;
                         }
@@ -2033,7 +2062,7 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                                         upcoming32 = (upcoming32 << 10) + u32::from(low)
                                             - (((0xD800u32 << 10) - 0x10000u32) + 0xDC00u32);
                                         // Successfully-paired surrogate. Read from the trie again.
-                                        trie_value = decomposition.trie.get32(upcoming32);
+                                        trie_value = decomposition.trie.get_supplementary(upcoming32);
                                         if starter_and_decomposes_to_self_impl(trie_value) {
                                             continue 'fast;
                                         }
@@ -2629,7 +2658,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                         }
                         // We might be doing a trie lookup by surrogate. Surrogates get
                         // a decomposition to U+FFFD.
-                        trie_value = composition.decomposition.trie.get32(upcoming32);
+                        trie_value = composition.decomposition.trie.get16(upcoming_code_unit);
                         if potential_passthrough_and_cannot_combine_backwards_impl(trie_value) {
                             // Can't combine backwards, hence a plain (non-backwards-combining)
                             // starter albeit past `composition_passthrough_bound`
@@ -2664,7 +2693,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                                         upcoming32 = (upcoming32 << 10) + u32::from(low)
                                             - (((0xD800u32 << 10) - 0x10000u32) + 0xDC00u32);
                                         // Successfully-paired surrogate. Read from the trie again.
-                                        trie_value = composition.decomposition.trie.get32(upcoming32);
+                                        trie_value = composition.decomposition.trie.get_supplementary(upcoming32);
                                         if potential_passthrough_and_cannot_combine_backwards_impl(trie_value) {
                                             // Fast-track succeeded!
                                             continue 'fast;
