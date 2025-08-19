@@ -1,14 +1,14 @@
-segmenter/break/grapheme/cluster/v1, <singleton>, 9696B, 9590B, 688dee45bd2a5940
-segmenter/break/line/v1, <singleton>, 19872B, 19767B, 765afed5083e597f
+segmenter/break/grapheme/cluster/v1, <singleton>, 12068B, 11962B, 65a178f4ddf17da9
+segmenter/break/line/v1, <singleton>, 23808B, 23703B, f56455de937dec0c
 segmenter/break/sentence/override/v1, <lookup>, 35B, 1 identifiers
-segmenter/break/sentence/override/v1, <total>, 332B, 273B, 1 unique payloads
-segmenter/break/sentence/override/v1, el, 332B, 273B, 745d858a06d47385
-segmenter/break/sentence/v1, <singleton>, 14832B, 14726B, be0a871755a7eb1f
+segmenter/break/sentence/override/v1, <total>, 2252B, 2193B, 1 unique payloads
+segmenter/break/sentence/override/v1, el, 2252B, 2193B, 82ca6c89fcd2e1b7
+segmenter/break/sentence/v1, <singleton>, 18720B, 18615B, 129361f3cc64ba0c
 segmenter/break/word/override/v1, <lookup>, 40B, 2 identifiers
-segmenter/break/word/override/v1, <total>, 556B, 496B, 1 unique payloads
-segmenter/break/word/override/v1, fi, 556B, 496B, e523305ca615559e
+segmenter/break/word/override/v1, <total>, 2248B, 2190B, 1 unique payloads
+segmenter/break/word/override/v1, fi, 2248B, 2190B, ab62b19edf3df901
 segmenter/break/word/override/v1, sv, -> fi
-segmenter/break/word/v1, <singleton>, 16414B, 16309B, a448cf3db65f7402
+segmenter/break/word/v1, <singleton>, 20562B, 20458B, aba6cdd121b5e39c
 segmenter/dictionary/auto/v1, <lookup>, 43B, 1 identifiers
 segmenter/dictionary/auto/v1, <total>, 2007134B, 2007113B, 1 unique payloads
 segmenter/dictionary/auto/v1, und/cjdict, 2007134B, 2007113B, f7552d2848b39b0d

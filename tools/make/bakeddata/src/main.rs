@@ -83,7 +83,7 @@ fn main() {
             .collect()
     };
 
-    let source = SourceDataProvider::new();
+    let source = SourceDataProvider::new().with_fast_tries();
 
     let driver = ExportDriver::new(
         source
