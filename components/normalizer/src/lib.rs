@@ -587,7 +587,6 @@ where
                     <&Trie<'data>>::try_from(&decompositions.trie)
                         .unwrap_or_else(|_| unreachable!("Incompatible data")),
                 ),
-                decompositions,
                 tables,
                 None,
                 0xC0,
@@ -607,14 +606,31 @@ where
     }
 }
 
+#[doc(hidden)] // used in collator
+pub fn new_decomposition<'data, I, T>(
+    delegate: I,
+    tables: &'data DecompositionTables,
+) -> impl Iterator<Item = char> + 'data
+where
+    I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32> + 'data,
+    T: AbstractCodePointTrie<'data, u32> + 'data,
+{
+    DecompositionInner::<'data, I, T, Uax15Policy>::new_with_supplements(
+            delegate,
+            tables,
+            None,
+            0xC0,
+        )
+}
+
 #[derive(Debug)]
 struct DecompositionInner<'data, I, T, P>
 where
     I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32>,
     T: AbstractCodePointTrie<'data, u32>,
-    &'data T: TryFrom<&'data CodePointTrie<'data, u32>>,
     P: IteratorPolicy,
 {
+    // See trie-value-format.md for the trie wrapped in `delegate`
     delegate: I,
     buffer: SmallVec<[CharacterAndClass; 17]>, // Enough to hold NFKD for U+FDFA
     /// The index of the next item to be read from `buffer`.
@@ -626,8 +642,6 @@ where
     // However, when `Decomposition` appears inside a `Composition`, this
     // may become a non-starter before `decomposing_next()` is called.
     pending: Option<CharacterAndTrieValue>, // None at end of stream
-    // See trie-value-format.md
-    trie: &'data T,
     scalars16: &'data ZeroSlice<u16>,
     scalars24: &'data ZeroSlice<char>,
     supplementary_scalars16: &'data ZeroSlice<u16>,
@@ -637,14 +651,14 @@ where
     /// 1. Decomposes to self.
     /// 2. Decomposition starts with a non-starter
     decomposition_passthrough_bound: u32, // never above 0xC0
-    _phantom: PhantomData<P>,
+    _phantom_p: PhantomData<P>,
+    _phantom_t: PhantomData<T>,
 }
 
 impl<'data, I, T, P> DecompositionInner<'data, I, T, P>
 where
     I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32>,
-    T: AbstractCodePointTrie<'data, u32>,
-    &'data T: TryFrom<&'data CodePointTrie<'data, u32>>,
+    T: AbstractCodePointTrie<'data, u32> + 'data,
     P: IteratorPolicy,
 {
     /// Constructs a decomposing iterator adapter from a delegate
@@ -655,7 +669,6 @@ where
     /// there's a good reason to use this constructor directly.
     fn new_with_supplements(
         delegate: I,
-        decompositions: &'data DecompositionData,
         tables: &'data DecompositionTables,
         supplementary_tables: Option<&'data DecompositionTables>,
         decomposition_passthrough_bound: u8,
@@ -667,8 +680,6 @@ where
             // Initialize with a placeholder starter in case
             // the real stream starts with a non-starter.
             pending: Some(CharacterAndTrieValue::new('\u{FFFF}', 0)),
-            #[allow(clippy::useless_conversion, clippy::expect_used)] // Expectation always succeeds when untyped tries are in use
-            trie: <&T>::try_from(&decompositions.trie).unwrap_or_else(|_| unreachable!("Incompatible data")),
             scalars16: &tables.scalars16,
             scalars24: &tables.scalars24,
             supplementary_scalars16: if let Some(supplementary) = supplementary_tables {
@@ -682,7 +693,8 @@ where
                 EMPTY_CHAR
             },
             decomposition_passthrough_bound: u32::from(decomposition_passthrough_bound),
-            _phantom: PhantomData,
+            _phantom_p: PhantomData,
+            _phantom_t: PhantomData,
         };
         let _ = ret.next(); // Remove the U+FFFF placeholder
         ret
@@ -718,7 +730,7 @@ where
             let mut combining_start = 0;
             for u in tail.iter() {
                 let ch = char_from_u16(u);
-                let trie_value = self.trie.scalar(ch);
+                let trie_value = self.delegate.trie().scalar(ch);
                 self.buffer.push(CharacterAndClass::new_with_trie_value(
                     CharacterAndTrieValue::new(ch, trie_value),
                 ));
@@ -757,7 +769,7 @@ where
             let mut i = 0;
             let mut combining_start = 0;
             for ch in tail.iter() {
-                let trie_value = self.trie.scalar(ch);
+                let trie_value = self.delegate.trie().scalar(ch);
                 self.buffer.push(CharacterAndClass::new_with_trie_value(
                     CharacterAndTrieValue::new(ch, trie_value),
                 ));
@@ -774,7 +786,7 @@ where
 
     #[inline(always)]
     fn attach_trie_value(&self, c: char) -> CharacterAndTrieValue {
-        CharacterAndTrieValue::new(c, self.trie.scalar(c))
+        CharacterAndTrieValue::new(c, self.delegate.trie().scalar(c))
     }
 
     fn delegate_next_no_pending(&mut self) -> Option<CharacterAndTrieValue> {
@@ -1036,15 +1048,14 @@ where
         // Slicing succeeds by construction; we've always ensured that `combining_start`
         // is in permissible range.
         #[expect(clippy::indexing_slicing)]
-        Self::sort_slice_by_ccc(&mut self.buffer[combining_start..], self.trie);
+        Self::sort_slice_by_ccc(&mut self.buffer[combining_start..], self.delegate.trie());
     }
 }
 
 impl<'data, I, T, P> Iterator for DecompositionInner<'data, I, T, P>
 where
     I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32>,
-    T: AbstractCodePointTrie<'data, u32>,
-    &'data T: TryFrom<&'data CodePointTrie<'data, u32>>,
+    T: AbstractCodePointTrie<'data, u32> + 'data,
     P: IteratorPolicy,
 {
     type Item = char;
@@ -1095,7 +1106,6 @@ struct CompositionInner<'data, I, T, P>
 where
     I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32>,
     T: AbstractCodePointTrie<'data, u32>,
-    &'data T: TryFrom<&'data CodePointTrie<'data, u32>>,
     P: IteratorPolicy,
 {
     /// The decomposing part of the normalizer than operates before
@@ -1120,7 +1130,6 @@ impl<'data, I, T, P> CompositionInner<'data, I, T, P>
 where
     I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32>,
     T: AbstractCodePointTrie<'data, u32>,
-    &'data T: TryFrom<&'data CodePointTrie<'data, u32>>,
     P: IteratorPolicy,
 {
     fn new(
@@ -1156,8 +1165,7 @@ where
 impl<'data, I, T, P> Iterator for CompositionInner<'data, I, T, P>
 where
     I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32>,
-    T: AbstractCodePointTrie<'data, u32>,
-    &'data T: TryFrom<&'data CodePointTrie<'data, u32>>,
+    T: AbstractCodePointTrie<'data, u32> + 'data,
     P: IteratorPolicy,
 {
     type Item = char;
@@ -1919,18 +1927,15 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
 
     fn normalize_iter_private<
         I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32>,
-        T: AbstractCodePointTrie<'data, u32>,
+        T: AbstractCodePointTrie<'data, u32> + 'data,
         P: IteratorPolicy,
     >(
         &self,
         iter: I,
     ) -> DecompositionInner<'data, I, T, P>
-    where
-        &'data T: TryFrom<&'data CodePointTrie<'data, u32>>,
     {
         DecompositionInner::new_with_supplements(
             iter,
-            self.decompositions,
             self.tables,
             self.supplementary_tables,
             self.decomposition_passthrough_bound,
@@ -2183,7 +2188,7 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                         }
                         // We might be doing a trie lookup by surrogate. Surrogates get
                         // a decomposition to U+FFFD.
-                        let mut trie_value = decomposition.trie.bmp(upcoming_code_unit);
+                        let mut trie_value = decomposition.delegate.trie().bmp(upcoming_code_unit);
                         if starter_and_decomposes_to_self_impl(trie_value) {
                             continue 'fast;
                         }
@@ -2228,9 +2233,9 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                                             // perf of the untyped trie case and have better ideas, please try
                                             // something better.
                                             #[cfg(feature = "serde")]
-                                            {decomposition.trie.code_point(upcoming32)}
+                                            {decomposition.delegate.trie().code_point(upcoming32)}
                                             #[cfg(not(feature = "serde"))]
-                                            {decomposition.trie.supplementary(upcoming32)}
+                                            {decomposition.delegate.trie().supplementary(upcoming32)}
                                         };
                                         if likely(starter_and_decomposes_to_self_impl(trie_value)) {
                                             continue 'fast;
@@ -2589,19 +2594,16 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
 
     fn normalize_iter_private<
         I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32>,
-        T: AbstractCodePointTrie<'data, u32>,
+        T: AbstractCodePointTrie<'data, u32> + 'data,
         P: IteratorPolicy,
     >(
         &self,
         iter: I,
     ) -> CompositionInner<'data, I, T, P>
-    where
-        &'data T: TryFrom<&'data CodePointTrie<'data, u32>>,
     {
         CompositionInner::new(
             DecompositionInner::new_with_supplements(
                 iter,
-                self.decomposing_normalizer.decompositions,
                 self.decomposing_normalizer.tables,
                 self.decomposing_normalizer.supplementary_tables,
                 self.decomposing_normalizer.decomposition_passthrough_bound,
@@ -2856,7 +2858,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                         }
                         // We might be doing a trie lookup by surrogate. Surrogates get
                         // a decomposition to U+FFFD.
-                        let mut trie_value = composition.decomposition.trie.bmp(upcoming_code_unit);
+                        let mut trie_value = composition.decomposition.delegate.trie().bmp(upcoming_code_unit);
                         if potential_passthrough_and_cannot_combine_backwards_impl(trie_value) {
                             // Can't combine backwards, hence a plain (non-backwards-combining)
                             // starter albeit past `composition_passthrough_bound`
@@ -2901,9 +2903,9 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                                             // perf of the untyped trie case and have better ideas, please try
                                             // something better.
                                             #[cfg(feature = "serde")]
-                                            {composition.decomposition.trie.code_point(upcoming32)}
+                                            {composition.decomposition.delegate.trie().code_point(upcoming32)}
                                             #[cfg(not(feature = "serde"))]
-                                            {composition.decomposition.trie.supplementary(upcoming32)}
+                                            {composition.decomposition.delegate.trie().supplementary(upcoming32)}
                                         };
                                         if likely(potential_passthrough_and_cannot_combine_backwards_impl(trie_value)) {
                                             // Fast-track succeeded!
