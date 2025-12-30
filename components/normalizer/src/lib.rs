@@ -68,6 +68,8 @@ type Trie<'trie> = CodePointTrie<'trie, u32>;
 #[cfg(not(feature = "serde"))]
 type Trie<'trie> = FastCodePointTrie<'trie, u32>;
 
+type CombiningBuffer = SmallVec<[CharacterAndClass; 2]>;
+
 // We don't depend on icu_properties to minimize deps, but we want to be able
 // to ensure we're using the right CCC values
 macro_rules! ccc {
@@ -577,12 +579,13 @@ where
     /// Public but hidden in order to be able to use this from the
     /// collator.
     #[doc(hidden)] // used in older versions of collator
+    #[deprecated = "Use `new_decomposition()` instead"]
     pub fn new(
         delegate: I,
         decompositions: &'data DecompositionData,
         tables: &'data DecompositionTables,
     ) -> Self {
-        Self {
+        let mut ret = Self {
             inner: DecompositionInner::new_with_supplements(
                 CharIterWithTrie::new(
                     delegate,
@@ -593,7 +596,9 @@ where
                 None,
                 0xC0,
             ),
-        }
+        };
+        let _ = ret.next();
+        ret
     }
 }
 
@@ -603,12 +608,16 @@ where
 {
     type Item = char;
 
+    #[inline]
     fn next(&mut self) -> Option<char> {
         self.inner.next()
     }
 }
 
+/// The iterator first yields an extra U+FFFD and then
+/// the sequence actually corresponding to the input.
 #[doc(hidden)] // used in collator
+#[inline(always)]
 pub fn new_decomposition<'data, I, T>(
     delegate: I,
     tables: &'data DecompositionTables,
@@ -618,11 +627,8 @@ where
     T: AbstractCodePointTrie<'data, u32> + 'data,
 {
     DecompositionInner::<'data, I, T, Uax15Policy>::new_with_supplements(
-            delegate,
-            tables,
-            None,
-            0xC0,
-        )
+        delegate, tables, None, 0xC0,
+    )
 }
 
 #[derive(Debug)]
@@ -634,7 +640,7 @@ where
 {
     // See trie-value-format.md for the trie wrapped in `delegate`
     delegate: I,
-    buffer: SmallVec<[CharacterAndClass; 17]>, // Enough to hold NFKD for U+FDFA
+    buffer: CombiningBuffer,
     /// The index of the next item to be read from `buffer`.
     /// The purpose if this index is to avoid having to move
     /// the rest upon every read.
@@ -667,21 +673,25 @@ where
     /// iterator and references to the necessary data, including
     /// supplementary data.
     ///
-    /// Use `DecomposingNormalizer::normalize_iter()` instead unless
-    /// there's a good reason to use this constructor directly.
+    /// The iterator first yields a U+0000 and only then the sequence
+    /// corresponding to the input. Unfortunately, due to the way
+    /// stack placement of structs work in Rust, the caller is responsible
+    /// for dealing with the initial U+0000. Alternatively, callers in this
+    /// crate file can (and should) call `init()`.
+    #[inline(always)]
     fn new_with_supplements(
         delegate: I,
         tables: &'data DecompositionTables,
         supplementary_tables: Option<&'data DecompositionTables>,
         decomposition_passthrough_bound: u8,
     ) -> Self {
-        let mut ret = DecompositionInner::<I, T, P> {
+        DecompositionInner::<I, T, P> {
             delegate,
             buffer: SmallVec::new(), // Normalized
             buffer_pos: 0,
             // Initialize with a placeholder starter in case
             // the real stream starts with a non-starter.
-            pending: Some(CharacterAndTrieValue::new('\u{FFFF}', 0)),
+            pending: Some(CharacterAndTrieValue::new('\u{0}', 0)),
             scalars16: &tables.scalars16,
             scalars24: &tables.scalars24,
             supplementary_scalars16: if let Some(supplementary) = supplementary_tables {
@@ -697,9 +707,13 @@ where
             decomposition_passthrough_bound: u32::from(decomposition_passthrough_bound),
             _phantom_p: PhantomData,
             _phantom_t: PhantomData,
-        };
-        let _ = ret.next(); // Remove the U+FFFF placeholder
-        ret
+        }
+    }
+
+    /// Simplified alternative to calling `next()` and discarding the value after constructing this struct.
+    fn init(&mut self) {
+        self.pending = None;
+        self.gather_and_sort_combining(0);
     }
 
     fn push_decomposition16(
@@ -784,11 +798,6 @@ where
             }
             (starter, combining_start)
         }
-    }
-
-    #[inline(always)]
-    fn attach_trie_value(&self, c: char) -> CharacterAndTrieValue {
-        CharacterAndTrieValue::new(c, self.delegate.trie().scalar(c))
     }
 
     fn delegate_next_no_pending(&mut self) -> Option<CharacterAndTrieValue> {
@@ -979,6 +988,60 @@ where
         slice.sort_by_key(|cc| cc.ccc());
     }
 
+    #[cold]
+    #[inline(never)]
+    fn push_special_decomposition(buffer: &mut CombiningBuffer, c: char) {
+        // The Tibetan special cases are starters that decompose into non-starters.
+        let mapped = match c {
+            '\u{0340}' => {
+                // COMBINING GRAVE TONE MARK
+                CharacterAndClass::new('\u{0300}', CCC_ABOVE)
+            }
+            '\u{0341}' => {
+                // COMBINING ACUTE TONE MARK
+                CharacterAndClass::new('\u{0301}', CCC_ABOVE)
+            }
+            '\u{0343}' => {
+                // COMBINING GREEK KORONIS
+                CharacterAndClass::new('\u{0313}', CCC_ABOVE)
+            }
+            '\u{0344}' => {
+                // COMBINING GREEK DIALYTIKA TONOS
+                buffer.push(CharacterAndClass::new('\u{0308}', CCC_ABOVE));
+                CharacterAndClass::new('\u{0301}', CCC_ABOVE)
+            }
+            '\u{0F73}' => {
+                // TIBETAN VOWEL SIGN II
+                buffer.push(CharacterAndClass::new('\u{0F71}', ccc!(CCC129, 129)));
+                CharacterAndClass::new('\u{0F72}', ccc!(CCC130, 130))
+            }
+            '\u{0F75}' => {
+                // TIBETAN VOWEL SIGN UU
+                buffer.push(CharacterAndClass::new('\u{0F71}', ccc!(CCC129, 129)));
+                CharacterAndClass::new('\u{0F74}', ccc!(CCC132, 132))
+            }
+            '\u{0F81}' => {
+                // TIBETAN VOWEL SIGN REVERSED II
+                buffer.push(CharacterAndClass::new('\u{0F71}', ccc!(CCC129, 129)));
+                CharacterAndClass::new('\u{0F80}', ccc!(CCC130, 130))
+            }
+            '\u{FF9E}' => {
+                // HALFWIDTH KATAKANA VOICED SOUND MARK
+                CharacterAndClass::new('\u{3099}', ccc!(KanaVoicing, 8))
+            }
+            '\u{FF9F}' => {
+                // HALFWIDTH KATAKANA VOICED SOUND MARK
+                CharacterAndClass::new('\u{309A}', ccc!(KanaVoicing, 8))
+            }
+            _ => {
+                // GIGO case
+                debug_assert!(false);
+                CharacterAndClass::new_with_placeholder(REPLACEMENT_CHARACTER)
+            }
+        };
+        buffer.push(mapped);
+    }
+
     fn gather_and_sort_combining(&mut self, combining_start: usize) {
         // Not a `for` loop to avoid holding a mutable reference to `self` across
         // the loop body.
@@ -992,59 +1055,7 @@ where
                 self.buffer
                     .push(CharacterAndClass::new_with_trie_value(ch_and_trie_val));
             } else {
-                // The Tibetan special cases are starters that decompose into non-starters.
-                let mapped = match ch_and_trie_val.character {
-                    '\u{0340}' => {
-                        // COMBINING GRAVE TONE MARK
-                        CharacterAndClass::new('\u{0300}', CCC_ABOVE)
-                    }
-                    '\u{0341}' => {
-                        // COMBINING ACUTE TONE MARK
-                        CharacterAndClass::new('\u{0301}', CCC_ABOVE)
-                    }
-                    '\u{0343}' => {
-                        // COMBINING GREEK KORONIS
-                        CharacterAndClass::new('\u{0313}', CCC_ABOVE)
-                    }
-                    '\u{0344}' => {
-                        // COMBINING GREEK DIALYTIKA TONOS
-                        self.buffer
-                            .push(CharacterAndClass::new('\u{0308}', CCC_ABOVE));
-                        CharacterAndClass::new('\u{0301}', CCC_ABOVE)
-                    }
-                    '\u{0F73}' => {
-                        // TIBETAN VOWEL SIGN II
-                        self.buffer
-                            .push(CharacterAndClass::new('\u{0F71}', ccc!(CCC129, 129)));
-                        CharacterAndClass::new('\u{0F72}', ccc!(CCC130, 130))
-                    }
-                    '\u{0F75}' => {
-                        // TIBETAN VOWEL SIGN UU
-                        self.buffer
-                            .push(CharacterAndClass::new('\u{0F71}', ccc!(CCC129, 129)));
-                        CharacterAndClass::new('\u{0F74}', ccc!(CCC132, 132))
-                    }
-                    '\u{0F81}' => {
-                        // TIBETAN VOWEL SIGN REVERSED II
-                        self.buffer
-                            .push(CharacterAndClass::new('\u{0F71}', ccc!(CCC129, 129)));
-                        CharacterAndClass::new('\u{0F80}', ccc!(CCC130, 130))
-                    }
-                    '\u{FF9E}' => {
-                        // HALFWIDTH KATAKANA VOICED SOUND MARK
-                        CharacterAndClass::new('\u{3099}', ccc!(KanaVoicing, 8))
-                    }
-                    '\u{FF9F}' => {
-                        // HALFWIDTH KATAKANA VOICED SOUND MARK
-                        CharacterAndClass::new('\u{309A}', ccc!(KanaVoicing, 8))
-                    }
-                    _ => {
-                        // GIGO case
-                        debug_assert!(false);
-                        CharacterAndClass::new_with_placeholder(REPLACEMENT_CHARACTER)
-                    }
-                };
-                self.buffer.push(mapped);
+                Self::push_special_decomposition(&mut self.buffer, ch_and_trie_val.character);
             }
         }
         // Slicing succeeds by construction; we've always ensured that `combining_start`
@@ -1062,6 +1073,7 @@ where
 {
     type Item = char;
 
+    #[inline]
     fn next(&mut self) -> Option<char> {
         if let Some(ret) = self.buffer.get(self.buffer_pos).map(|c| c.character()) {
             self.buffer_pos += 1;
@@ -1098,6 +1110,7 @@ where
 {
     type Item = char;
 
+    #[inline]
     fn next(&mut self) -> Option<char> {
         self.inner.next()
     }
@@ -1134,6 +1147,7 @@ where
     T: AbstractCodePointTrie<'data, u32>,
     P: IteratorPolicy,
 {
+    #[inline(always)]
     fn new(
         decomposition: DecompositionInner<'data, I, T, P>,
         canonical_compositions: Char16Trie<'data>,
@@ -1205,17 +1219,13 @@ where
                 }
                 debug_assert_eq!(self.decomposition.buffer_pos, 0);
                 undecomposed_starter = self.decomposition.pending.take()?;
-                if u32::from(undecomposed_starter.character) < self.composition_passthrough_bound
-                    || undecomposed_starter.potential_passthrough()
-                {
+                if undecomposed_starter.potential_passthrough() {
                     // TODO(#2385): In the NFC case (moot for NFKC and UTS46), if the upcoming
                     // character is not below `decomposition_passthrough_bound` but is
                     // below `composition_passthrough_bound`, we read from the trie
                     // unnecessarily.
                     if let Some(upcoming) = self.decomposition.delegate_next_no_pending() {
-                        let cannot_combine_backwards = u32::from(upcoming.character)
-                            < self.composition_passthrough_bound
-                            || !upcoming.can_combine_backwards();
+                        let cannot_combine_backwards = !upcoming.can_combine_backwards();
                         self.decomposition.pending = Some(upcoming);
                         if cannot_combine_backwards {
                             // Fast-track succeeded!
@@ -1331,9 +1341,7 @@ where
                 // holds a character, because this flag isn't defined to be meaningful
                 // when `pending` isn't holding a character.
                 let pending = self.decomposition.pending.as_ref().unwrap();
-                if u32::from(pending.character) < self.composition_passthrough_bound
-                    || !pending.can_combine_backwards()
-                {
+                if !pending.can_combine_backwards() {
                     // Won't combine backwards anyway.
                     return Some(starter);
                 }
@@ -1378,6 +1386,8 @@ macro_rules! composing_normalize_to {
         ) -> core::fmt::Result {
             $prolog
             let mut $composition = self.normalize_iter_private::<_, Trie, Uax15Policy>($text.chars_with_trie(self.trie()));
+            let _ = $composition.decomposition.init(); // Discard the U+0000.
+
             for cc in $composition.decomposition.buffer.drain(..) {
                 $sink.write_char(cc.character())?;
             }
@@ -1392,8 +1402,7 @@ macro_rules! composing_normalize_to {
                     } else {
                         return Ok(());
                     };
-                if u32::from($undecomposed_starter.character) < $composition_passthrough_bound ||
-                    $undecomposed_starter.potential_passthrough()
+                if $undecomposed_starter.potential_passthrough()
                 {
                     // We don't know if a `REPLACEMENT_CHARACTER` occurred in the slice or
                     // was returned in response to an error by the iterator. Assume the
@@ -1511,8 +1520,7 @@ macro_rules! composing_normalize_to {
                         // holds a character, because this flag isn't defined to be meaningful
                         // when `pending` isn't holding a character.
                         let pending = $composition.decomposition.pending.as_ref().unwrap();
-                        if u32::from(pending.character) < $composition.composition_passthrough_bound
-                            || !pending.can_combine_backwards()
+                        if !pending.can_combine_backwards()
                         {
                             // Won't combine backwards anyway.
                             $sink.write_char(starter)?;
@@ -1562,6 +1570,7 @@ macro_rules! decomposing_normalize_to {
             $prolog
 
             let mut $decomposition = self.normalize_iter_private::<_, Trie, Uax15Policy>($text.chars_with_trie(self.trie()));
+            let _ = $decomposition.init(); // Discard the U+0000.
 
             // Try to get the compiler to hoist the bound to a register.
             let $decomposition_passthrough_bound = $decomposition.decomposition_passthrough_bound;
@@ -1921,12 +1930,17 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
 
     /// Wraps a delegate iterator into a decomposing iterator
     /// adapter by using the data already held by this normalizer.
+    #[inline]
     pub fn normalize_iter<I: Iterator<Item = char>>(&self, iter: I) -> Decomposition<'data, I> {
-        Decomposition {
+        let mut ret = Decomposition {
             inner: self.normalize_iter_private(CharIterWithTrie::new(iter, self.trie())),
-        }
+        };
+        let _ = ret.inner.init(); // Discard the U+0000.
+        ret
     }
 
+    /// There's an extra U+FFFD at the start. The caller must deal with it.
+    #[inline(always)]
     fn normalize_iter_private<
         I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32>,
         T: AbstractCodePointTrie<'data, u32> + 'data,
@@ -1934,8 +1948,7 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
     >(
         &self,
         iter: I,
-    ) -> DecompositionInner<'data, I, T, P>
-    {
+    ) -> DecompositionInner<'data, I, T, P> {
         DecompositionInner::new_with_supplements(
             iter,
             self.tables,
@@ -2159,7 +2172,7 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                 let end: *const u16 = unsafe { ptr.add(delegate_as_slice.len()) };
                 'fast: loop {
                     // if let Some(&upcoming_code_unit) = code_unit_iter.next() {
-                    if ptr != end {
+                    if likely(ptr != end) {
                         // SAFETY: We just checked that `ptr` has not reached `end`.
                         // `ptr` always advances by one, and we always have a check
                         // per advancement.
@@ -2191,7 +2204,7 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                         // We might be doing a trie lookup by surrogate. Surrogates get
                         // a decomposition to U+FFFD.
                         let mut trie_value = decomposition.delegate.trie().bmp(upcoming_code_unit);
-                        if starter_and_decomposes_to_self_impl(trie_value) {
+                        if likely(starter_and_decomposes_to_self_impl(trie_value)) {
                             continue 'fast;
                         }
                         // We might now be looking at a surrogate.
@@ -2213,7 +2226,7 @@ impl<'data> DecomposingNormalizerBorrowed<'data> {
                             if likely(surrogate_base <= (0xDBFF - 0xD800)) {
                                 // let iter_backup = code_unit_iter.clone();
                                 // if let Some(&low) = code_unit_iter.next() {
-                                if ptr != end {
+                                if likely(ptr != end) {
                                     // SAFETY: We just checked that `ptr` has not reached `end`.
                                     // `ptr` always advances by one, and we always have a check
                                     // per advancement.
@@ -2588,12 +2601,17 @@ impl ComposingNormalizerBorrowed<'static> {
 impl<'data> ComposingNormalizerBorrowed<'data> {
     /// Wraps a delegate iterator into a composing iterator
     /// adapter by using the data already held by this normalizer.
+    #[inline]
     pub fn normalize_iter<I: Iterator<Item = char>>(&self, iter: I) -> Composition<'data, I> {
-        Composition {
+        let mut ret = Composition {
             inner: self.normalize_iter_private(CharIterWithTrie::new(iter, self.trie())),
-        }
+        };
+        let _ = ret.inner.decomposition.init(); // Discard the U+0000.
+        ret
     }
 
+    /// There's an extra U+FFFD at the start. The caller must deal with it.
+    #[inline(always)]
     fn normalize_iter_private<
         I: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32>,
         T: AbstractCodePointTrie<'data, u32> + 'data,
@@ -2601,8 +2619,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
     >(
         &self,
         iter: I,
-    ) -> CompositionInner<'data, I, T, P>
-    {
+    ) -> CompositionInner<'data, I, T, P> {
         CompositionInner::new(
             DecompositionInner::new_with_supplements(
                 iter,
@@ -2763,7 +2780,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                     // slicing and unwrap OK, because we've just evidently read enough previously.
                     // `unwrap` OK, because we've previously manage to read the previous character
                     #[expect(clippy::indexing_slicing)]
-                    let mut consumed_so_far = pending_slice[..pending_slice.len() - composition.decomposition.delegate.as_slice().len() - upcoming.len_utf8()].chars();
+                    let mut consumed_so_far = pending_slice[..pending_slice.len() - composition.decomposition.delegate.as_slice().len() - upcoming.len_utf8()].chars_with_trie(composition.decomposition.delegate.trie());
                     #[expect(clippy::unwrap_used)]
                     {
                         // TODO: If the previous character was below the passthrough bound,
@@ -2771,7 +2788,8 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                         // the most-recent trie value. Need to measure what's more expensive:
                         // Remembering the trie value on each iteration or re-reading the
                         // last one after the fast-track run.
-                        undecomposed_starter = composition.decomposition.attach_trie_value(consumed_so_far.next_back().unwrap());
+                        let (undecomposed, undecomposed_trie_val) = consumed_so_far.next_back().unwrap();
+                        undecomposed_starter = CharacterAndTrieValue::new(undecomposed, undecomposed_trie_val);
                     }
                     let consumed_so_far_slice = consumed_so_far.as_slice();
                     sink.write_str(unsafe { core::str::from_utf8_unchecked(consumed_so_far_slice)})?;
@@ -2825,7 +2843,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
 
                 'fast: loop {
                     // if let Some(&upcoming_code_unit) = code_unit_iter.next() {
-                    if ptr != end {
+                    if likely(ptr != end) {
                         // SAFETY: We just checked that `ptr` has not reached `end`.
                         // `ptr` always advances by one, and we always have a check
                         // per advancement.
@@ -2861,7 +2879,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                         // We might be doing a trie lookup by surrogate. Surrogates get
                         // a decomposition to U+FFFD.
                         let mut trie_value = composition.decomposition.delegate.trie().bmp(upcoming_code_unit);
-                        if potential_passthrough_and_cannot_combine_backwards_impl(trie_value) {
+                        if likely(potential_passthrough_and_cannot_combine_backwards_impl(trie_value)) {
                             // Can't combine backwards, hence a plain (non-backwards-combining)
                             // starter albeit past `composition_passthrough_bound`
 
@@ -2883,7 +2901,7 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
                             if likely(surrogate_base <= (0xDBFF - 0xD800)) {
                                 // let iter_backup = code_unit_iter.clone();
                                 // if let Some(&low) = code_unit_iter.next() {
-                                if ptr != end {
+                                if likely(ptr != end) {
                                     // SAFETY: We just checked that `ptr` has not reached `end`.
                                     // `ptr` always advances by one, and we always have a check
                                     // per advancement.
