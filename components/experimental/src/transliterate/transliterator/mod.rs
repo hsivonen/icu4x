@@ -530,7 +530,7 @@ impl Transliterator {
             + DataProvider<NormalizerNfkdDataV1>
             + DataProvider<NormalizerNfdTablesV1>
             + DataProvider<NormalizerNfkdTablesV1>
-            + DataProvider<NormalizerNfcV1>
+            + DataProvider<NormalizerNfcV2>
             + ?Sized,
     {
         Self::internal_try_new_with_override_unstable(
@@ -631,7 +631,7 @@ impl Transliterator {
             + DataProvider<NormalizerNfkdDataV1>
             + DataProvider<NormalizerNfdTablesV1>
             + DataProvider<NormalizerNfkdTablesV1>
-            + DataProvider<NormalizerNfcV1>
+            + DataProvider<NormalizerNfcV2>
             + ?Sized,
         F: Fn(&Locale) -> Option<Result<Box<dyn CustomTransliterator>, DataError>>,
     {
@@ -658,7 +658,7 @@ impl Transliterator {
             + DataProvider<NormalizerNfkdDataV1>
             + DataProvider<NormalizerNfdTablesV1>
             + DataProvider<NormalizerNfkdTablesV1>
-            + DataProvider<NormalizerNfcV1>
+            + DataProvider<NormalizerNfcV2>
             + ?Sized,
         F: Fn(&Locale) -> Option<Result<Box<dyn CustomTransliterator>, DataError>>,
     {
@@ -697,7 +697,7 @@ impl Transliterator {
             + DataProvider<NormalizerNfkdDataV1>
             + DataProvider<NormalizerNfdTablesV1>
             + DataProvider<NormalizerNfkdTablesV1>
-            + DataProvider<NormalizerNfcV1>
+            + DataProvider<NormalizerNfcV2>
             + ?Sized,
         F: Fn(&Locale) -> Option<Result<Box<dyn CustomTransliterator>, DataError>>,
     {
@@ -749,7 +749,7 @@ impl Transliterator {
             + DataProvider<NormalizerNfkdDataV1>
             + DataProvider<NormalizerNfdTablesV1>
             + DataProvider<NormalizerNfkdTablesV1>
-            + DataProvider<NormalizerNfcV1>,
+            + DataProvider<NormalizerNfcV2>,
         PD: ?Sized + DataProvider<CaseMapV1>,
     {
         // TODO(#3909, #3910): add more
