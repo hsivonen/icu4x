@@ -86,6 +86,7 @@ members = [
     "tools/benchmark/binsize",
     "tools/benchmark/macros",
     "tools/benchmark/memory",
+    "tools/composition_freq",
     "tools/make/bakeddata",
     "tools/make/codegen",
     "tools/make/depcheck",

@@ -1,0 +1,9 @@
+[package]
+name = "composition_freq"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+icu_normalizer = { path = "../../components/normalizer" }
+tinystr = { path = "../../utils/tinystr" }
+serde_json = { workspace = true }
