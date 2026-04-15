@@ -251,7 +251,7 @@ macro_rules! normalization_canonical_compositions_provider_new {
             $file_name,
             {
                 let ranking_json_string =
-                    std::fs::read_to_string("/home/hsivonen/Downloads/out.json").unwrap();
+                    std::fs::read_to_string("/Users/hsivonen/Downloads/out.json").unwrap();
                 let rankings: HashMap<char, u64> =
                     serde_json::from_str(&ranking_json_string).unwrap();
 

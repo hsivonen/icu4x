@@ -560,6 +560,8 @@ impl SourceDataProvider {
                         ("collation/implicithan/ja_unihan_data.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/ja_unihan_data.toml").as_slice()),
                         ("collation/implicithan/ja_unihan_meta.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/ja_unihan_meta.toml").as_slice()),
                         ("collation/implicithan/ja_unihan_reord.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/ja_unihan_reord.toml").as_slice()),
+                        ("collation/implicithan/en_US_POSIX_standard_data.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/en_US_POSIX_standard_data.toml").as_slice()),
+                        ("collation/implicithan/en_US_POSIX_standard_meta.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/en_US_POSIX_standard_meta.toml").as_slice()),
                         ("collation/implicithan/ko_search_data.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/ko_search_data.toml").as_slice()),
                         ("collation/implicithan/ko_searchjl_data.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/ko_searchjl_data.toml").as_slice()),
                         ("collation/implicithan/ko_standard_data.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/ko_standard_data.toml").as_slice()),
@@ -572,6 +574,14 @@ impl SourceDataProvider {
                         ("collation/implicithan/zh_stroke_data.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_stroke_data.toml").as_slice()),
                         ("collation/implicithan/zh_unihan_data.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_unihan_data.toml").as_slice()),
                         ("collation/implicithan/zh_zhuyin_data.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_zhuyin_data.toml").as_slice()),
+                        ("collation/implicithan/zh_pinyin_meta.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_pinyin_meta.toml").as_slice()),
+                        ("collation/implicithan/zh_stroke_meta.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_stroke_meta.toml").as_slice()),
+                        ("collation/implicithan/zh_unihan_meta.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_unihan_meta.toml").as_slice()),
+                        ("collation/implicithan/zh_zhuyin_meta.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_zhuyin_meta.toml").as_slice()),
+                        ("collation/implicithan/zh_pinyin_reord.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_pinyin_reord.toml").as_slice()),
+                        ("collation/implicithan/zh_stroke_reord.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_stroke_reord.toml").as_slice()),
+                        ("collation/implicithan/zh_unihan_reord.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_unihan_reord.toml").as_slice()),
+                        ("collation/implicithan/zh_zhuyin_reord.toml", include_bytes!("../../tests/data/icuexport/collation/implicithan/zh_zhuyin_reord.toml").as_slice()),
                         ("norm/small/compositions.toml", include_bytes!("../../tests/data/icuexport/norm/small/compositions.toml").as_slice()),
                         ("norm/small/decompositionex.toml", include_bytes!("../../tests/data/icuexport/norm/small/decompositionex.toml").as_slice()),
                         ("norm/fast/nfd.toml", include_bytes!("../../tests/data/icuexport/norm/fast/nfd.toml").as_slice()),
@@ -691,6 +701,11 @@ impl SourceDataProvider {
                         ("Unihan_IRGSources.txt", include_bytes!("../../tests/data/unihan/Unihan_IRGSources.txt").as_slice())
                     ].into_iter().collect(),
                 ), irg_cache: Default::default() })),
+                ucd_paths: Some(Arc::new(AbstractFs::Memory(
+                    [
+                        ("security/IdentifierStatus.txt", include_bytes!("../../tests/data/ucd/security/IdentifierStatus.txt").as_slice())
+                    ].into_iter().collect(),
+                ))),
                 tzdb_paths: Some(Arc::new(TzdbCache { root: AbstractFs::Memory(
                     [
                         ("africa", include_bytes!("../../tests/data/tzdb/africa").as_slice()),

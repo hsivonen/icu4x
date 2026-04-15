@@ -435,7 +435,7 @@ impl CollationElement32 {
     pub(crate) fn tag(self) -> Tag {
         debug_assert!(self.low_byte() >= SPECIAL_CE32_LOW_BYTE);
         // Safety: Tag has values 0 to 15, which are filtered for with the 0xF mask.
-        unsafe { core::mem::transmute(self.low_byte() & 0xF) }
+        unsafe { core::mem::transmute::<u8, Tag>(self.low_byte() & 0xF) }
     }
 
     /// Simplest possible check for the Latin1 fast path.
@@ -2235,6 +2235,8 @@ where
                                         // a chunk to 254 digits on a previous round, the eventual
                                         // comparison result can be wrong, but that replicates an
                                         // ICU4C bug. Let's fix both as a follow-up.
+                                        //
+                                        // https://unicode-org.atlassian.net/browse/ICU-23351
                                         loop {
                                             let Some((first, tail)) = remaining.split_first()
                                             else {
