@@ -2072,6 +2072,17 @@ fn test_fffe_issue_6811() {
     );
 }
 
+#[test]
+fn test_sorting_by_ccc() {
+    let mut options = CollatorOptions::default();
+    options.strength = Some(Strength::Tertiary);
+    let collator = Collator::try_new(Default::default(), options).unwrap();
+    assert_eq!(
+        collator.compare_utf16(&[0x0CCB, 0x0308, 0x0301], &[0x0CCB, 0x0308, 0x0301, 0x0CCB]),
+        Ordering::Less
+    );
+}
+
 #[cfg(feature = "latin1")]
 #[test]
 fn test_latin1_root() {
