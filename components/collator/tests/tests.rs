@@ -2078,7 +2078,10 @@ fn test_sorting_by_ccc() {
     options.strength = Some(Strength::Tertiary);
     let collator = Collator::try_new(Default::default(), options).unwrap();
     assert_eq!(
-        collator.compare_utf16(&[0x0CCB, 0x0308, 0x0301], &[0x0CCB, 0x0308, 0x0301, 0x0CCB]),
+        collator.compare(
+            "\u{F57}\u{F4D}\u{F73}\u{F39}\u{F9F}\u{F75}\u{F4B}",
+            "\u{F57}\u{F4D}\u{F73}\u{F39}\u{F9F}\u{F75}\u{F4B}\u{F47}\u{F0D}\u{F73}\u{F69}\u{F8F}"
+        ),
         Ordering::Less
     );
 }
