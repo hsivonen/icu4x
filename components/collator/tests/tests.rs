@@ -2073,6 +2073,14 @@ fn test_fffe_issue_6811() {
 }
 
 #[test]
+fn test_numeric_more() {
+    let mut prefs = CollatorPreferences::default();
+    prefs.numeric_ordering = Some(CollationNumericOrdering::True);
+    let collator = Collator::try_new(prefs, CollatorOptions::default()).unwrap();
+    assert_eq!(collator.compare("8A", "899"), Ordering::Less);
+}
+
+#[test]
 fn test_sorting_by_ccc() {
     let mut options = CollatorOptions::default();
     options.strength = Some(Strength::Tertiary);
