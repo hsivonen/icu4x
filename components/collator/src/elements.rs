@@ -1158,7 +1158,7 @@ where
     }
 
     fn maybe_gather_combining(&mut self) {
-        let Some(first) = self.upcoming.first().map(|c_c_tv| c_c_tv.clone()) else {
+        let Some(first) = self.upcoming.first().cloned() else {
             return;
         };
         if !first.decomposition_starts_with_non_starter() {
