@@ -1107,12 +1107,9 @@ impl<'data> CollatorBorrowed<'data> {
                     // Try Hangul.
                     let left_hangul_offset = u32::from(left_u16).wrapping_sub(HANGUL_S_BASE);
                     if left_hangul_offset < HANGUL_S_COUNT {
-                        if let Some(right_u) = right_tail.first() {
-                            let right_u16 = *right_u;
-                            let right_hangul_offset = u32::from(right_u16).wrapping_sub(HANGUL_S_BASE);
-                            if right_hangul_offset < HANGUL_S_COUNT {
-                                hangul_syllable_compare!(left_hangul_offset, right_hangul_offset,);
-                            }
+                        let right_hangul_offset = u32::from(right_u16).wrapping_sub(HANGUL_S_BASE);
+                        if right_hangul_offset < HANGUL_S_COUNT {
+                            hangul_syllable_compare!(left_hangul_offset, right_hangul_offset,);
                         }
                     }
                 }
