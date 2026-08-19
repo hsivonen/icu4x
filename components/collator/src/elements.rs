@@ -439,35 +439,39 @@ impl CollationElement32 {
     }
 
     /// Simplest possible check for the Latin1 fast path.
+    ///
+    /// A return value of zero means no primary.
     #[cfg(feature = "latin1")]
     #[inline(always)]
-    pub fn to_primary_simple(self) -> Option<u32> {
+    pub fn to_primary_simple(self) -> u32 {
         let t = self.low_byte();
         if t < SPECIAL_CE32_LOW_BYTE {
             // Not special
-            Some(self.0 & 0xFFFF0000)
+            self.0 & 0xFFFF0000
         } else {
-            None
+            0
         }
     }
 
     /// Extract only the first primary in the quick check without identical
     /// prefix.
+    ///
+    /// A return value of zero means no primary.
     #[inline(always)]
-    pub fn to_primary_in_quick_check(self, data: &CollationData) -> Option<u32> {
+    pub fn to_primary_in_quick_check(self, data: &CollationData) -> u32 {
         let t = self.low_byte();
         if t < SPECIAL_CE32_LOW_BYTE {
             // Not special
-            Some(self.0 & 0xFFFF0000)
+            self.0 & 0xFFFF0000
         } else if t == LONG_PRIMARY_CE32_LOW_BYTE {
-            Some(self.0 - u32::from(t))
+            self.0 - u32::from(t)
         } else {
             let tag = self.tag();
             if tag == Tag::Expansion {
                 // Hiragana in `ja` tailoring
-                Some(data.get_primary_from_ces(self.index()))
+                data.get_primary_from_ces(self.index())
             } else {
-                None
+                0
             }
             // Note: If we start adding support for more tags,
             // we should probably do early exits for contractions
@@ -480,33 +484,31 @@ impl CollationElement32 {
     /// prefix. Unlike `to_primary_in_quick_check`, this method variant can
     /// handle `Tag::Digit` if the numeric mode is not enabled. (The numeric
     /// mode requires looking ahead.)
+    ///
+    /// A return value of zero means no primary.
     #[inline(always)]
-    pub fn to_primary_in_quick_check_numeric(
-        self,
-        data: &CollationData,
-        numeric: bool,
-    ) -> Option<u32> {
+    pub fn to_primary_in_quick_check_numeric(self, data: &CollationData, numeric: bool) -> u32 {
         let mut ce32 = self;
         loop {
             let t = ce32.low_byte();
             if t < SPECIAL_CE32_LOW_BYTE {
                 // Not special
-                return Some(ce32.0 & 0xFFFF0000);
+                return ce32.0 & 0xFFFF0000;
             }
             if t == LONG_PRIMARY_CE32_LOW_BYTE {
-                return Some(ce32.0 - u32::from(t));
+                return ce32.0 - u32::from(t);
             }
             let tag = ce32.tag();
             if tag == Tag::Expansion {
                 // Hiragana in `ja` tailoring
-                return Some(data.get_primary_from_ces(ce32.index()));
+                return data.get_primary_from_ces(ce32.index());
             }
             // Digit case for JetStream 3; see https://github.com/WebKit/JetStream/issues/294
             if tag == Tag::Digit && !numeric {
                 ce32 = data.get_ce32(ce32.index());
                 continue;
             }
-            return None;
+            return 0;
             // Note: If we start adding support for more tags,
             // we should probably do early exits for contractions
             // and potential Hangul syllables before checking
