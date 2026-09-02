@@ -13,6 +13,8 @@ use icu::collections::codepointtrie::SmallCodePointTrie;
 use icu::collections::codepointtrie::Typed;
 use icu::collections::codepointtrie::TypedCodePointTrie;
 use icu::locale::subtags::{language, script};
+use icu::normalizer::properties::CanonicalCombiningClassMap;
+use icu::normalizer::properties::CanonicalCombiningClassMapBorrowed;
 #[cfg(any(feature = "use_wasm", feature = "use_icu4c"))]
 use icu_codepointtrie_builder::CodePointTrieBuilder;
 use icu_provider::prelude::*;
@@ -188,12 +190,14 @@ collation_provider!(
 impl DataProvider<CollationRootV1> for SourceDataProvider {
     fn load(&self, req: DataRequest) -> Result<DataResponse<CollationRootV1>, DataError> {
         self.check_req::<CollationRootV1>(req)?;
+        let ccc = CanonicalCombiningClassMap::try_new_unstable(&self)?;
         Ok(DataResponse {
             metadata: Default::default(),
             payload: DataPayload::from_owned(convert_data_from_serde(
                 self.load_toml::<collator_serde::CollationData>(Default::default(), "_data")
                     .map_err(|e| e.with_req(CollationRootV1::INFO, req))?,
                 None,
+                ccc.as_borrowed(),
             )?),
         })
     }
@@ -208,11 +212,13 @@ impl IterableDataProviderCached<CollationRootV1> for SourceDataProvider {
 impl DataProvider<CollationTailoringV1> for SourceDataProvider {
     fn load(&self, req: DataRequest) -> Result<DataResponse<CollationTailoringV1>, DataError> {
         self.check_req::<CollationTailoringV1>(req)?;
+        let ccc = CanonicalCombiningClassMap::try_new_unstable(&self)?;
         let root_trie: &SmallCodePointTrie<u32> = &ROOT_CELL
             .get_or_init(|| {
                 convert_data_from_serde(
                     self.load_toml::<collator_serde::CollationData>(Default::default(), "_data")?,
                     None,
+                    ccc.as_borrowed(),
                 )
             })
             .as_ref()
@@ -222,7 +228,9 @@ impl DataProvider<CollationTailoringV1> for SourceDataProvider {
             metadata: Default::default(),
             payload: DataPayload::from_owned(
                 self.load_toml::<collator_serde::CollationData>(req.id, "_data")
-                    .and_then(|d| convert_data_from_serde(d, Some((&req.id, root_trie))))
+                    .and_then(|d| {
+                        convert_data_from_serde(d, Some((&req.id, root_trie)), ccc.as_borrowed())
+                    })
                     .map_err(|e| e.with_req(<CollationTailoringV1>::INFO, req))?,
             ),
         })
@@ -239,10 +247,101 @@ impl IterableDataProviderCached<CollationTailoringV1> for SourceDataProvider {
     }
 }
 
+fn rewrite_reorderable(
+    c: u32,
+    ce32: u32,
+    ce32s: &mut Vec<u32>,
+    ccc: &CanonicalCombiningClassMapBorrowed<'_>,
+) -> u32 {
+
+    let ce32 = CollationElement32::new(ce32);
+    let tag = ce32.tag_checked();
+    if let Some(ref t) = tag {
+        match t {
+            // Note that the "ForReorderable" cases need to pass through,
+            // since we may have hoisted them from root!
+            Tag::Reserved3 => {
+                // TODO: Make this a real error
+                panic!("Collation data contains Reserved3");
+            }
+            Tag::BuilderData => {
+                // TODO: Make this a real error
+                panic!("Collation data contains BuilderData");
+            }
+            Tag::LatinExpansion => {
+                // TODO: Make this a real error
+                panic!("Collation data contains LatinExpansion");
+            }
+            Tag::Hangul => {
+                // TODO: Make this a real error
+                panic!("Collation data contains Hangul");
+            }
+            _ => {}
+        }
+    }
+    if ccc.get32_u8(c) == 0 {
+        // Not reorderable.
+        return ce32.bits();
+    }
+    if let Some(ref t) = tag {
+        match t {
+            Tag::LongPrimary => {
+                // Replace the tag.
+                return (ce32.bits() & 0xFFFF_FFF0) | (Tag::LongPrimaryForReorderable as u32);
+            }
+            Tag::Expansion => {
+                // Replace the tag.
+                return (ce32.bits() & 0xFFFF_FFF0) | (Tag::Expansion as u32);
+            }
+            Tag::Digit => {
+                // TODO: Error out properly
+                panic!("Digit ce32 not allowed for reorderable characters.");
+            }
+            _ => {
+                // The primary quick-check does not examine this ce32 type.
+                return ce32.bits();
+            }
+        }
+    }
+    // Simple
+    if (ce32.bits() & 0xFFFF_0000) == 0 {
+        // No primary. We don't need to hide this, because the primary quick-check
+        // compares primaries.
+        return ce32.bits();
+    }
+    if ce32.bits() as u16 == COMMON_SEC_AND_TER_CE32 {
+        // `LongPrimaryForReorderable` implies common
+        // secondary and tertiary weights, so we can rewrite this.
+        return (ce32.bits() & 0xFFFF_0000) | (LONG_PRIMARY_FOR_REORDERABLE_CE32_LOW_BYTE as u32);
+    }
+    // There is no tag to swap. The low byte needs to be preserved, so we
+    // can't add a tag. We need to hide this ce32 behind indirection.
+    // As of Unicode 17, there should be 34 of these across the collations,
+    // so the data size increase is acceptable.
+    // Notably, combining Latin and Cyrillic letters above are here.
+    // Characters that have an `Expansion32`-typed ce32 to begin with
+    // tend to be compatibility characters and symbols, so there isn't
+    // performance pressure to handle `Expansion32` in the quick primary
+    // check.
+    let len = 1; // We store one item.
+    let index = ce32s.len();
+    if index > MAX_INDEX {
+        panic!("Index too large to fit in an Expansion32");
+    }
+    ce32s.push(ce32.bits());
+    // See `makeCE32FromTagIndexAndLength` in ICU4C.
+    ((index as u32) << 13)
+        | (len << 8)
+        | u32::from(SPECIAL_CE32_LOW_BYTE)
+        | (Tag::Expansion32 as u32)
+}
+
 fn rebuild_data<'a>(
     trie: CodePointTrie<'a, u32>,
     id_and_root: Option<(&DataIdentifierBorrowed, &SmallCodePointTrie<u32>)>,
-) -> SmallCodePointTrie<'a, u32> {
+    ce32s: &[u32],
+    ccc: CanonicalCombiningClassMapBorrowed<'_>,
+) -> (SmallCodePointTrie<'a, u32>, Vec<u32>) {
     #[cfg(not(any(feature = "use_wasm", feature = "use_icu4c")))]
     {
         let _ = trie;
@@ -252,6 +351,7 @@ fn rebuild_data<'a>(
     {
         let default_value = trie.get('\u{10FFFF}');
         let mut rewritten_fast: Vec<u32> = Vec::new();
+        let mut augmented_ce32s = Vec::from(ce32s);
         if let Some((id, root)) = id_and_root {
             let collation_type: &str = &id.marker_attributes;
             // Only optimize the default collation and the three non-unihan Chinese collations
@@ -379,9 +479,15 @@ fn rebuild_data<'a>(
 
         for i in 0..0xAC00 {
             if let Some(trie_val) = rewritten_fast.get(i as usize) {
-                builder.set_value(i, *trie_val);
+                builder.set_value(
+                    i,
+                    rewrite_reorderable(i, *trie_val, &mut augmented_ce32s, &ccc),
+                );
             } else {
-                builder.set_value(i, trie.get32(i));
+                builder.set_value(
+                    i,
+                    rewrite_reorderable(i, trie.get32(i), &mut augmented_ce32s, &ccc),
+                );
             }
         }
         for _ in 0xAC00..0xD7A4 {
@@ -393,9 +499,15 @@ fn rebuild_data<'a>(
         }
         for i in 0xD7A4..=(char::MAX as u32) {
             if let Some(trie_val) = rewritten_fast.get(i as usize) {
-                builder.set_value(i, *trie_val);
+                builder.set_value(
+                    i,
+                    rewrite_reorderable(i, *trie_val, &mut augmented_ce32s, &ccc),
+                );
             } else {
-                builder.set_value(i, trie.get32(i));
+                builder.set_value(
+                    i,
+                    rewrite_reorderable(i, trie.get32(i), &mut augmented_ce32s, &ccc),
+                );
             }
         }
         if let Some((id, root)) = id_and_root {
@@ -408,14 +520,17 @@ fn rebuild_data<'a>(
                     if trie.get32(i) == default_value {
                         let ce32 = root.get32(i);
                         if icu::collator::is_self_contained(ce32) {
-                            builder.set_value(i, ce32);
+                            builder.set_value(
+                                i,
+                                rewrite_reorderable(i, ce32, &mut augmented_ce32s, &ccc),
+                            );
                         }
                     }
                 }
             }
             let collation_type: &str = &id.marker_attributes;
             match collation_type {
-                "search" | "emoji" | "eor" | "unihan" => {},
+                "search" | "emoji" | "eor" | "unihan" => {}
                 _ => {
                     // `und` means Chinese after we've excluded `search`, `emoji`, and `eor`.
                     if lang == language!("ja") || lang == language!("und") {
@@ -424,7 +539,10 @@ fn rebuild_data<'a>(
                             if trie.get32(i) == default_value {
                                 let ce32 = root.get32(i);
                                 if icu::collator::is_self_contained(ce32) {
-                                    builder.set_value(i, ce32);
+                                    builder.set_value(
+                                        i,
+                                        rewrite_reorderable(i, ce32, &mut augmented_ce32s, &ccc),
+                                    );
                                 }
                             }
                         }
@@ -435,21 +553,23 @@ fn rebuild_data<'a>(
         let Typed::Small(t) = builder.build().to_typed() else {
             panic!("Must have small trie type");
         };
-        t
+        (t, augmented_ce32s)
     }
 }
 
 fn convert_data_from_serde(
     data: &collator_serde::CollationData,
     id_and_root: Option<(&DataIdentifierBorrowed, &SmallCodePointTrie<u32>)>,
+    ccc: CanonicalCombiningClassMapBorrowed<'_>,
 ) -> Result<CollationData<'static>, DataError> {
     let trie = CodePointTrie::<u32>::try_from(&data.trie)
         .map_err(|e| DataError::custom("trie conversion").with_display_context(&e))?;
     log::info!("CONVERT {:?}", id_and_root.map(|x| x.0));
+    let (rebuilt_trie, augmented_ce32s) = rebuild_data(trie, id_and_root, &data.ce32s, ccc);
     Ok(CollationData {
-        trie: rebuild_data(trie, id_and_root),
+        trie: rebuilt_trie,
         contexts: ZeroVec::alloc_from_slice(&data.contexts),
-        ce32s: ZeroVec::alloc_from_slice(&data.ce32s),
+        ce32s: ZeroVec::alloc_from_slice(&augmented_ce32s),
         ces: data.ces.iter().map(|i| *i as u64).collect(),
     })
 }
