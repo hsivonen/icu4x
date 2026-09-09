@@ -520,7 +520,11 @@ impl CollationElement32 {
     ///
     /// A return value of zero means no primary.
     #[inline(always)]
-    pub(crate) fn to_primary_in_quick_check_numeric(self, data: &CollationData, numeric: bool) -> u32 {
+    pub(crate) fn to_primary_in_quick_check_numeric(
+        self,
+        data: &CollationData,
+        numeric: bool,
+    ) -> u32 {
         let mut ce32 = self;
         loop {
             let t = ce32.low_byte();
@@ -1070,6 +1074,7 @@ where
             iter: delegate,
             pending: SmallVec::new(),
             pending_pos: 0,
+            // Deliberately not `['\u{FFFF}'; 2]`; see https://bugzilla.mozilla.org/show_bug.cgi?id=2062662
             prefix: ['\u{FFFF}', '\u{FFFF}'],
             upcoming: SmallVec::new(),
             root,
