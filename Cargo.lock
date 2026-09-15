@@ -1361,6 +1361,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "utf16_iter",
  "utf8_iter",
  "yoke",
  "zerofrom",
@@ -3363,9 +3364,6 @@ checksum = "09cc8ee72d2a9becf2f2febe0205bbed8fc6615b7cb429ad062dc7b7ddd036a9"
 [[package]]
 name = "utf16_iter"
 version = "1.0.5"
-dependencies = [
- "icu_collections",
-]
 
 [[package]]
 name = "utf8_iter"

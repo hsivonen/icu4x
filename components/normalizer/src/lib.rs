@@ -112,6 +112,8 @@ use icu_collections::codepointtrie::CharIterWithTrie;
 use icu_collections::codepointtrie::CharsWithTrieDefaultForAsciiEx;
 use icu_collections::codepointtrie::CodePointTrie;
 use icu_collections::codepointtrie::FastCodePointTrie;
+#[cfg(feature = "utf16_iter")]
+use icu_collections::codepointtrie::Utf16CharsWithTrieEx;
 #[cfg(feature = "utf8_iter")]
 use icu_collections::codepointtrie::Utf8CharsWithTrieDefaultForAsciiEx;
 use icu_collections::codepointtrie::WithTrie;
@@ -125,8 +127,6 @@ use provider::NormalizerNfcV2;
 use provider::NormalizerNfdTablesV1;
 use provider::NormalizerNfkdTablesV1;
 use smallvec::SmallVec;
-#[cfg(feature = "utf16_iter")]
-use utf16_iter::Utf16CharsWithTrieEx;
 #[cfg(feature = "utf8_iter")]
 use utf8_iter::Utf8CharsEx;
 use zerovec::{zeroslice, ZeroSlice};

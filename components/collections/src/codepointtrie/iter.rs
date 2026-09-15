@@ -4,6 +4,12 @@
 
 use core::iter::FusedIterator;
 use core::marker::PhantomData;
+use utf16_iter::helpers::bmp_to_char;
+use utf16_iter::helpers::surrogate_pair_to_char;
+use utf16_iter::Utf16CharIndicesWithHandler;
+use utf16_iter::Utf16CharsEx;
+use utf16_iter::Utf16CharsWithHandler;
+use utf16_iter::Utf16Handler;
 use utf8_iter::helpers::bits_to_char;
 use utf8_iter::helpers::four_bytes_to_char;
 use utf8_iter::helpers::high_ten;
@@ -53,6 +59,7 @@ where
     V: TrieValue,
     T: AbstractCodePointTrie<'trie, V>,
 {
+    #[inline]
     fn clone(&self) -> Self {
         Self {
             trie: self.trie,
@@ -71,6 +78,7 @@ where
     /// # Safety-usable invariant
     ///
     /// The trait contract requires the caller to guarantee that `ascii` is ASCII.
+    #[inline(always)]
     unsafe fn single_byte(&self, ascii: u8) -> Self::Output {
         // SAFETY: The safety-usable invariant from the trait contract is
         // the invariant of `self.trie.ascii`.
@@ -81,6 +89,7 @@ where
     ///
     /// The trait contract requires the caller to guarantee that `first` and `second`
     /// form a two-byte UTF-8 sequence.
+    #[inline(always)]
     unsafe fn two_byte(&self, first: u8, second: u8) -> Self::Output {
         let high_five = low_five(first);
         let low_six = low_six(second);
@@ -101,6 +110,7 @@ where
     ///
     /// The trait contract requires the caller to guarantee that `first`, `second`,
     /// and `third` form a three-byte UTF-8 sequence.
+    #[inline(always)]
     unsafe fn three_byte(&self, first: u8, second: u8, third: u8) -> Self::Output {
         let high_ten = high_ten(first, second);
         let low_six = low_six(third);
@@ -123,6 +133,7 @@ where
     ///
     /// The trait contract requires the caller to guarantee that `first`, `second`,
     /// `third`, and `fourth` form a four-byte UTF-8 sequence.
+    #[inline(always)]
     unsafe fn four_byte(&self, first: u8, second: u8, third: u8, fourth: u8) -> Self::Output {
         // SAFETY: The safety-usable invariant of this method is the invariant of
         // `four_bytes_to_char`.
@@ -130,6 +141,7 @@ where
         (c, self.trie.supplementary(u32::from(c)))
     }
 
+    #[inline(always)]
     fn error(&self) -> Self::Output {
         (
             char::REPLACEMENT_CHARACTER,
@@ -172,6 +184,7 @@ where
     V: TrieValue + Default,
     T: AbstractCodePointTrie<'trie, V>,
 {
+    #[inline]
     fn clone(&self) -> Self {
         Self {
             trie: self.trie,
@@ -190,6 +203,7 @@ where
     /// # Safety-usable invariant
     ///
     /// The trait contract requires the caller to guarantee that `ascii` is ASCII.
+    #[inline(always)]
     unsafe fn single_byte(&self, ascii: u8) -> Self::Output {
         // SAFETY: The safety-usable invariant from the trait contract is
         // the invariant of `self.trie.ascii`.
@@ -200,6 +214,7 @@ where
     ///
     /// The trait contract requires the caller to guarantee that `first` and `second`
     /// form a two-byte UTF-8 sequence.
+    #[inline(always)]
     unsafe fn two_byte(&self, first: u8, second: u8) -> Self::Output {
         let high_five = low_five(first);
         let low_six = low_six(second);
@@ -220,6 +235,7 @@ where
     ///
     /// The trait contract requires the caller to guarantee that `first`, `second`,
     /// and `third` form a three-byte UTF-8 sequence.
+    #[inline(always)]
     unsafe fn three_byte(&self, first: u8, second: u8, third: u8) -> Self::Output {
         let high_ten = high_ten(first, second);
         let low_six = low_six(third);
@@ -242,6 +258,7 @@ where
     ///
     /// The trait contract requires the caller to guarantee that `first`, `second`,
     /// `third`, and `fourth` form a four-byte UTF-8 sequence.
+    #[inline(always)]
     unsafe fn four_byte(&self, first: u8, second: u8, third: u8, fourth: u8) -> Self::Output {
         // SAFETY: The safety-usable invariant of this method is the invariant of
         // `four_bytes_to_char`.
@@ -249,6 +266,86 @@ where
         (c, self.trie.supplementary(u32::from(c)))
     }
 
+    #[inline(always)]
+    fn error(&self) -> Self::Output {
+        (
+            char::REPLACEMENT_CHARACTER,
+            self.trie.bmp(char::REPLACEMENT_CHARACTER as u16),
+        )
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct TrieUtf16Handler<'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    trie: &'trie T,
+    phantom: PhantomData<V>,
+}
+
+impl<'trie, T, V> TrieUtf16Handler<'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    pub(crate) fn new(trie: &'trie T) -> Self {
+        Self {
+            trie,
+            phantom: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn trie(&self) -> &'trie T {
+        self.trie
+    }
+}
+
+impl<'trie, T, V> Clone for TrieUtf16Handler<'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            trie: self.trie,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'trie, T, V> Utf16Handler for TrieUtf16Handler<'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    type Output = (char, V);
+
+    /// # Safety-usable invariant
+    ///
+    /// The trait contract requires the caller to guarantee that `bmp` is
+    /// not a surrogate.
+    #[inline(always)]
+    unsafe fn bmp(&self, bmp: u16) -> Self::Output {
+        // SAFETY: The safety-usable invariant from above applies.
+        (unsafe { bmp_to_char(bmp) }, self.trie.bmp(bmp))
+    }
+
+    /// # Safety-usable invariant
+    ///
+    /// The trait contract requires the caller to guarantee that `bmp` is
+    /// not a surrogate.
+    #[inline(always)]
+    unsafe fn surrogate_pair(&self, high_surrogate: u16, low_surrogate: u16) -> Self::Output {
+        // SAFETY: The safety-usable invariant from above applies.
+        let c = unsafe { surrogate_pair_to_char(high_surrogate, low_surrogate) };
+        (c, self.trie.supplementary(u32::from(c)))
+    }
+
+    #[inline(always)]
     fn error(&self) -> Self::Output {
         (
             char::REPLACEMENT_CHARACTER,
@@ -780,7 +877,7 @@ where
 
 // --
 
-/// Iterator over `str` by `char` and `TrieValue`.
+/// Iterator over `[u8]` by `char` and `TrieValue`.
 #[derive(Debug)]
 pub struct Utf8CharsWithTrie<'slice, 'trie, T, V>
 where
@@ -882,7 +979,7 @@ where
 }
 // --
 
-/// Iterator over `str` by `char` and `TrieValue`.
+/// Iterator over `[u8]` by `char`s and their indices and `TrieValue`.
 #[derive(Debug)]
 pub struct Utf8CharIndicesWithTrie<'slice, 'trie, T, V>
 where
@@ -1028,7 +1125,7 @@ where
 
 // --
 
-/// Iterator over `str` by `char` and `TrieValue` but
+/// Iterator over `[u8]` by `char` and `TrieValue` but
 /// the trie value for ASCII is `V::default()` instead of
 /// reading from the trie. (`V::default()` can be optimized
 /// on at compile time while reading the trie's default value
@@ -1289,6 +1386,254 @@ where
         trie: &'trie T,
     ) -> Utf8CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V> {
         Utf8CharIndicesWithTrieDefaultForAscii::new(self, trie)
+    }
+}
+
+// ---
+
+/// Iterator over `[u16]` by `char` and `TrieValue`.
+#[derive(Debug)]
+pub struct Utf16CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    delegate: Utf16CharsWithHandler<'slice, TrieUtf16Handler<'trie, T, V>>,
+}
+
+impl<'slice, 'trie, T, V> Utf16CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Construct a new `Utf16CharsWithTrie`.
+    #[inline]
+    pub fn new(bytes: &'slice [u16], trie: &'trie T) -> Self {
+        Self {
+            delegate: Utf16CharsWithHandler::new(bytes, TrieUtf16Handler::new(trie)),
+        }
+    }
+
+    /// Obtains the remainder of the iterator as a string slice.
+    #[inline]
+    pub fn as_slice(&self) -> &'slice [u16] {
+        self.delegate.as_slice()
+    }
+}
+
+impl<'slice, 'trie, T, V> Clone for Utf16CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            delegate: self.delegate.clone(),
+        }
+    }
+}
+
+impl<'slice, 'trie, T, V> WithTrie<'trie, T, V> for Utf16CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn trie(&self) -> &'trie T {
+        self.delegate.handler().trie()
+    }
+}
+
+impl<'slice, 'trie, T, V> Iterator for Utf16CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    type Item = (char, V);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.delegate.next()
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.as_slice().chars().count()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.as_slice().chars().size_hint()
+    }
+
+    #[inline]
+    fn last(mut self) -> Option<Self::Item> {
+        self.next_back()
+    }
+
+    // TODO: Delegate advance_by to `Chars` once stabilized.
+}
+
+impl<'slice, 'trie, T, V> DoubleEndedIterator for Utf16CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.delegate.next_back()
+    }
+}
+
+impl<'slice, 'trie, T, V> FusedIterator for Utf16CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+}
+// --
+
+/// Iterator over `[u16]` by `char`s and their indices and `TrieValue`.
+#[derive(Debug)]
+pub struct Utf16CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    delegate: Utf16CharIndicesWithHandler<'slice, TrieUtf16Handler<'trie, T, V>>,
+}
+
+impl<'slice, 'trie, T, V> Utf16CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Construct a new `Utf16CharIndicesWithTrie`.
+    #[inline]
+    pub fn new(bytes: &'slice [u16], trie: &'trie T) -> Self {
+        Self {
+            delegate: Utf16CharIndicesWithHandler::new(bytes, TrieUtf16Handler::new(trie)),
+        }
+    }
+
+    /// Obtains the remainder of the iterator as a string slice.
+    #[inline]
+    pub fn as_slice(&self) -> &'slice [u16] {
+        self.delegate.as_slice()
+    }
+}
+
+impl<'slice, 'trie, T, V> Clone for Utf16CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            delegate: self.delegate.clone(),
+        }
+    }
+}
+
+impl<'slice, 'trie, T, V> WithTrie<'trie, T, V> for Utf16CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn trie(&self) -> &'trie T {
+        self.delegate.handler().trie()
+    }
+}
+
+impl<'slice, 'trie, T, V> Iterator for Utf16CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    type Item = (usize, char, V);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let (i, (c, v)) = self.delegate.next()?;
+        Some((i, c, v))
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.as_slice().chars().count()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.as_slice().chars().size_hint()
+    }
+
+    #[inline]
+    fn last(mut self) -> Option<Self::Item> {
+        // XXX: Is this correct when it doesn't change the internal state as consumed?
+        self.next_back()
+    }
+
+    // TODO: Delegate advance_by to `Chars` once stabilized.
+}
+
+impl<'slice, 'trie, T, V> DoubleEndedIterator for Utf16CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let (i, (c, v)) = self.delegate.next_back()?;
+        Some((i, c, v))
+    }
+}
+
+impl<'slice, 'trie, T, V> FusedIterator for Utf16CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+}
+
+// --
+
+/// Adds convenience methods to `&[u16]`.
+pub trait Utf16CharsWithTrieEx<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Method for easily creating `Utf16CharsWithTrie` on `[u16]` analogously to `chars()`.
+    fn chars_with_trie(&'slice self, trie: &'trie T) -> Utf16CharsWithTrie<'slice, 'trie, T, V>;
+
+    /// Method for easily creating `Utf16CharIndicesWithTrie` on `[u16]` analogously to `char_indices()`.
+    fn char_indices_with_trie(
+        &'slice self,
+        trie: &'trie T,
+    ) -> Utf16CharIndicesWithTrie<'slice, 'trie, T, V>;
+}
+
+impl<'slice, 'trie, T, V> Utf16CharsWithTrieEx<'slice, 'trie, T, V> for [u16]
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Method for easily creating `Utf16CharsWithTrie` on `[u16]` analogously to `chars()`.
+    #[inline]
+    fn chars_with_trie(&'slice self, trie: &'trie T) -> Utf16CharsWithTrie<'slice, 'trie, T, V> {
+        Utf16CharsWithTrie::new(self, trie)
+    }
+
+    /// Method for easily creating `Utf16CharIndicesWithTrie` on `[u16]` analogously to `char_indices()`.
+    #[inline]
+    fn char_indices_with_trie(
+        &'slice self,
+        trie: &'trie T,
+    ) -> Utf16CharIndicesWithTrie<'slice, 'trie, T, V> {
+        Utf16CharIndicesWithTrie::new(self, trie)
     }
 }
 
@@ -1731,5 +2076,29 @@ mod tests {
         assert_eq!(iter.next_back(), Some((1, 'b', 0)));
         assert_eq!(iter.next_back(), Some((0, 'a', 0)));
         assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_utf16_forward() {
+        let trie = crate::codepointtrie::planes::get_planes_trie();
+        let s = &[0xD83Eu16, 0xDD73u16, 0xD83Eu16, 0x00E4u16, 0xD83Eu16];
+        let mut iter = s.chars_with_trie(&trie);
+        assert_eq!(iter.next(), Some(('🥳', 1)));
+        assert_eq!(iter.next(), Some(('\u{FFFD}', 0)));
+        assert_eq!(iter.next(), Some(('\u{00E4}', 0)));
+        assert_eq!(iter.next(), Some(('\u{FFFD}', 0)));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_utf16_backwards() {
+        let trie = crate::codepointtrie::planes::get_planes_trie();
+        let s = &[0xD83Eu16, 0xDD73u16, 0xD83Eu16, 0x00E4u16, 0xD83Eu16];
+        let mut iter = s.chars_with_trie(&trie);
+        assert_eq!(iter.next_back(), Some(('\u{FFFD}', 0)));
+        assert_eq!(iter.next_back(), Some(('\u{00E4}', 0)));
+        assert_eq!(iter.next_back(), Some(('\u{FFFD}', 0)));
+        assert_eq!(iter.next_back(), Some(('🥳', 1)));
+        assert_eq!(iter.next_back(), None);
     }
 }

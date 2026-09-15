@@ -59,6 +59,7 @@ use icu_collections::codepointtrie::FastCodePointTrie;
 #[cfg(feature = "latin1")]
 use icu_collections::codepointtrie::Latin1CharsWithTrieEx;
 use icu_collections::codepointtrie::TypedCodePointTrie;
+use icu_collections::codepointtrie::Utf16CharsWithTrieEx;
 use icu_collections::codepointtrie::Utf8CharsWithTrieDefaultForAsciiEx;
 use icu_collections::codepointtrie::Utf8CharsWithTrieEx;
 use icu_collections::codepointtrie::WithTrie;
@@ -69,7 +70,6 @@ use icu_normalizer::provider::NormalizerNfdTablesV1;
 use icu_provider::marker::ErasedMarker;
 use icu_provider::prelude::*;
 use smallvec::SmallVec;
-use utf16_iter::Utf16CharsWithTrieEx;
 use zerovec::ule::AsULE;
 
 #[cfg(feature = "serde")]

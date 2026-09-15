@@ -26,6 +26,7 @@ zerofrom = { workspace = true, features = ["derive"] }
 zerovec = { workspace = true, features = ["derive", "yoke"] }
 potential_utf = { workspace = true, features = ["zerovec"] }
 utf8_iter = { path = "../../../utf8_iter" }
+utf16_iter = { path = "../../../utf16_iter" }
 
 serde = { workspace = true, features = ["derive"], optional = true }
 databake = { workspace = true, features = ["derive"], optional = true }

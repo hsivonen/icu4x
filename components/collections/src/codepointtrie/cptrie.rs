@@ -730,7 +730,7 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
     ///
     /// `ascii` must be less than 128.
     #[inline(always)]
-    pub unsafe fn get7(&self, ascii: u8) -> T {
+    pub(crate) unsafe fn get7(&self, ascii: u8) -> T {
         debug_assert!(ascii < 128);
         debug_assert!((ascii as usize) < self.data.len());
         // SAFETY: Length of `self.data` checked in the constructor.
@@ -752,7 +752,7 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
     /// With debug assertions enabled, panics if the above safety invariants are
     /// violated or `high_five` represents non-shortest form.
     #[inline(always)]
-    pub unsafe fn get_utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
+    pub(crate) unsafe fn get_utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
         debug_assert!(low_six <= 0b111_111); // Safety invariant.
         debug_assert!(high_five <= 0b11_111); // Safety invariant.
         debug_assert!(high_five > 0b1); // Non-shortest form; not safety invariant.
@@ -784,7 +784,7 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
     /// sequence.
     #[inline(always)]
     #[allow(clippy::unusual_byte_groupings)]
-    pub unsafe fn get_utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
+    pub(crate) unsafe fn get_utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
         debug_assert!(low_six <= 0b111_111); // Safety invariant.
         debug_assert!(high_ten <= 0b1111_111_111); // Not actually a _safety_ invariant for this impl.
         debug_assert!(high_ten > 0b11_111); // Non-shortest form; not safety invariant.
@@ -1811,6 +1811,7 @@ impl<'trie, T: TrieValue> TypedCodePointTrie<'trie, T> for FastCodePointTrie<'tr
     /// sequence.
     #[inline(always)]
     #[allow(clippy::unusual_byte_groupings)]
+    #[doc(hidden)] // ICU4X internal
     unsafe fn get_utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
         debug_assert!(low_six <= 0b111_111); // Safety invariant.
         debug_assert!(high_ten <= 0b1111_111_111); // Safety invariant.
@@ -2000,6 +2001,7 @@ pub trait AbstractCodePointTrie<'trie, T: TrieValue>: Seal {
     /// # Safety
     ///
     /// `ascii` must be less than 128.
+    #[doc(hidden)] // ICU4X internal
     unsafe fn ascii(&self, ascii: u8) -> T;
 
     /// Look up trie value by a two-byte UTF-8 sequence.
@@ -2011,6 +2013,7 @@ pub trait AbstractCodePointTrie<'trie, T: TrieValue>: Seal {
     ///
     /// `high_five` must not have bit positions other than the lowest 5 set to 1.
     /// `low_six` must not have bit positions other than the lowest 6 set to 1.
+    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_two_byte(&self, high_five: u32, low_six: u32) -> T;
 
     /// Look up trie value by a three-byte UTF-8 or WTF-8 sequence.
@@ -2024,6 +2027,7 @@ pub trait AbstractCodePointTrie<'trie, T: TrieValue>: Seal {
     ///
     /// `high_ten` must not have bit positions other than the lowest 10 set to 1.
     /// `low_six` must not have bit positions other than the lowest 6 set to 1.
+    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T;
 
     /// Look up trie value by a Latin1 character.
@@ -2052,16 +2056,19 @@ pub trait AbstractCodePointTrie<'trie, T: TrieValue>: Seal {
 
 impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for FastCodePointTrie<'trie, T> {
     #[inline(always)]
+    #[doc(hidden)] // ICU4X internal
     unsafe fn ascii(&self, ascii: u8) -> T {
         self.get7(ascii)
     }
 
     #[inline(always)]
+    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
         self.get_utf8_two_byte(high_five, low_six)
     }
 
     #[inline(always)]
+    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
         self.get_utf8_three_byte(high_ten, low_six)
     }
@@ -2094,16 +2101,19 @@ impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for FastCodePointTrie<
 
 impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for SmallCodePointTrie<'trie, T> {
     #[inline(always)]
+    #[doc(hidden)] // ICU4X internal
     unsafe fn ascii(&self, ascii: u8) -> T {
         self.get7(ascii)
     }
 
     #[inline(always)]
+    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
         self.get_utf8_two_byte(high_five, low_six)
     }
 
     #[inline(always)]
+    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
         self.get_utf8_three_byte(high_ten, low_six)
     }
@@ -2136,16 +2146,19 @@ impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for SmallCodePointTrie
 
 impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for CodePointTrie<'trie, T> {
     #[inline(always)]
+    #[doc(hidden)] // ICU4X internal
     unsafe fn ascii(&self, ascii: u8) -> T {
         self.get7(ascii)
     }
 
     #[inline(always)]
+    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
         self.get_utf8_two_byte(high_five, low_six)
     }
 
     #[inline(always)]
+    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
         self.get_utf8_three_byte(high_ten, low_six)
     }
