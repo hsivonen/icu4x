@@ -4,9 +4,258 @@
 
 use core::iter::FusedIterator;
 use core::marker::PhantomData;
+use utf8_iter::helpers::bits_to_char;
+use utf8_iter::helpers::four_bytes_to_char;
+use utf8_iter::helpers::high_ten;
+use utf8_iter::helpers::low_five;
+use utf8_iter::helpers::low_six;
+use utf8_iter::CharIndicesWithHandler;
+use utf8_iter::CharsWithHandler;
+use utf8_iter::Utf8CharIndicesWithHandler;
+use utf8_iter::Utf8CharsEx;
+use utf8_iter::Utf8CharsWithHandler;
+use utf8_iter::Utf8Handler;
 
 use crate::codepointtrie::AbstractCodePointTrie;
 use crate::codepointtrie::TrieValue;
+
+#[derive(Debug)]
+pub(crate) struct TrieUtf8Handler<'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    trie: &'trie T,
+    phantom: PhantomData<V>,
+}
+
+impl<'trie, T, V> TrieUtf8Handler<'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    pub(crate) fn new(trie: &'trie T) -> Self {
+        Self {
+            trie,
+            phantom: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn trie(&self) -> &'trie T {
+        self.trie
+    }
+}
+
+impl<'trie, T, V> Clone for TrieUtf8Handler<'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            trie: self.trie,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'trie, T, V> Utf8Handler for TrieUtf8Handler<'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    type Output = (char, V);
+
+    /// # Safety-usable invariant
+    ///
+    /// The trait contract requires the caller to guarantee that `ascii` is ASCII.
+    unsafe fn single_byte(&self, ascii: u8) -> Self::Output {
+        // SAFETY: The safety-usable invariant from the trait contract is
+        // the invariant of `self.trie.ascii`.
+        return (char::from(ascii), unsafe { self.trie.ascii(ascii) });
+    }
+
+    /// # Safety-usable invariant
+    ///
+    /// The trait contract requires the caller to guarantee that `first` and `second`
+    /// form a two-byte UTF-8 sequence.
+    unsafe fn two_byte(&self, first: u8, second: u8) -> Self::Output {
+        let high_five = low_five(first);
+        let low_six = low_six(second);
+        // SAFETY: We've satified the invariants of both `bits_to_char`
+        // and `self.trie.utf8_two_byte` by ensuring that the first
+        // argument does not have bits other than the low five set
+        // and the second argument does not have bits other than
+        // the low six set.
+        unsafe {
+            (
+                bits_to_char(high_five, low_six),
+                self.trie.utf8_two_byte(high_five, low_six),
+            )
+        }
+    }
+
+    /// # Safety-usable invariant
+    ///
+    /// The trait contract requires the caller to guarantee that `first`, `second`,
+    /// and `third` form a three-byte UTF-8 sequence.
+    unsafe fn three_byte(&self, first: u8, second: u8, third: u8) -> Self::Output {
+        let high_ten = high_ten(first, second);
+        let low_six = low_six(third);
+        // SAFETY: We've satified the invariants of both `bits_to_char`
+        // and `self.trie.utf8_three_byte` by ensuring that the first
+        // argument does not have bits other than the low ten set
+        // and the second argument does not have bits other than
+        // the low six set and from the safety-usable invariant
+        // we know that these bits do not represent a surrogate
+        // (for the invariant of `bits_to_char`).
+        unsafe {
+            (
+                bits_to_char(high_ten, low_six),
+                self.trie.utf8_three_byte(high_ten, low_six),
+            )
+        }
+    }
+
+    /// # Safety-usable invariant
+    ///
+    /// The trait contract requires the caller to guarantee that `first`, `second`,
+    /// `third`, and `fourth` form a four-byte UTF-8 sequence.
+    unsafe fn four_byte(&self, first: u8, second: u8, third: u8, fourth: u8) -> Self::Output {
+        // SAFETY: The safety-usable invariant of this method is the invariant of
+        // `four_bytes_to_char`.
+        let c = unsafe { four_bytes_to_char(first, second, third, fourth) };
+        (c, self.trie.supplementary(u32::from(c)))
+    }
+
+    fn error(&self) -> Self::Output {
+        (
+            char::REPLACEMENT_CHARACTER,
+            self.trie.bmp(char::REPLACEMENT_CHARACTER as u16),
+        )
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct TrieUtf8HandlerDefaultForAscii<'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    trie: &'trie T,
+    phantom: PhantomData<V>,
+}
+
+impl<'trie, T, V> TrieUtf8HandlerDefaultForAscii<'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    pub(crate) fn new(trie: &'trie T) -> Self {
+        Self {
+            trie,
+            phantom: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub(crate) fn trie(&self) -> &'trie T {
+        self.trie
+    }
+}
+
+impl<'trie, T, V> Clone for TrieUtf8HandlerDefaultForAscii<'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            trie: self.trie,
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<'trie, T, V> Utf8Handler for TrieUtf8HandlerDefaultForAscii<'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    type Output = (char, V);
+
+    /// # Safety-usable invariant
+    ///
+    /// The trait contract requires the caller to guarantee that `ascii` is ASCII.
+    unsafe fn single_byte(&self, ascii: u8) -> Self::Output {
+        // SAFETY: The safety-usable invariant from the trait contract is
+        // the invariant of `self.trie.ascii`.
+        return (char::from(ascii), V::default());
+    }
+
+    /// # Safety-usable invariant
+    ///
+    /// The trait contract requires the caller to guarantee that `first` and `second`
+    /// form a two-byte UTF-8 sequence.
+    unsafe fn two_byte(&self, first: u8, second: u8) -> Self::Output {
+        let high_five = low_five(first);
+        let low_six = low_six(second);
+        // SAFETY: We've satified the invariants of both `bits_to_char`
+        // and `self.trie.utf8_two_byte` by ensuring that the first
+        // argument does not have bits other than the low five set
+        // and the second argument does not have bits other than
+        // the low six set.
+        unsafe {
+            (
+                bits_to_char(high_five, low_six),
+                self.trie.utf8_two_byte(high_five, low_six),
+            )
+        }
+    }
+
+    /// # Safety-usable invariant
+    ///
+    /// The trait contract requires the caller to guarantee that `first`, `second`,
+    /// and `third` form a three-byte UTF-8 sequence.
+    unsafe fn three_byte(&self, first: u8, second: u8, third: u8) -> Self::Output {
+        let high_ten = high_ten(first, second);
+        let low_six = low_six(third);
+        // SAFETY: We've satified the invariants of both `bits_to_char`
+        // and `self.trie.utf8_three_byte` by ensuring that the first
+        // argument does not have bits other than the low ten set
+        // and the second argument does not have bits other than
+        // the low six set and from the safety-usable invariant
+        // we know that these bits do not represent a surrogate
+        // (for the invariant of `bits_to_char`).
+        unsafe {
+            (
+                bits_to_char(high_ten, low_six),
+                self.trie.utf8_three_byte(high_ten, low_six),
+            )
+        }
+    }
+
+    /// # Safety-usable invariant
+    ///
+    /// The trait contract requires the caller to guarantee that `first`, `second`,
+    /// `third`, and `fourth` form a four-byte UTF-8 sequence.
+    unsafe fn four_byte(&self, first: u8, second: u8, third: u8, fourth: u8) -> Self::Output {
+        // SAFETY: The safety-usable invariant of this method is the invariant of
+        // `four_bytes_to_char`.
+        let c = unsafe { four_bytes_to_char(first, second, third, fourth) };
+        (c, self.trie.supplementary(u32::from(c)))
+    }
+
+    fn error(&self) -> Self::Output {
+        (
+            char::REPLACEMENT_CHARACTER,
+            self.trie.bmp(char::REPLACEMENT_CHARACTER as u16),
+        )
+    }
+}
 
 /// Provides a trie accessor for types (likely iterators)
 /// that are holding a reference to a type that implements
@@ -20,6 +269,8 @@ where
     fn trie(&self) -> &'trie T;
 }
 
+// ---
+
 /// Iterator over `str` by `char` and `TrieValue`.
 #[derive(Debug)]
 pub struct CharsWithTrie<'slice, 'trie, T, V>
@@ -27,9 +278,7 @@ where
     V: TrieValue,
     T: AbstractCodePointTrie<'trie, V>,
 {
-    delegate: core::slice::Iter<'slice, u8>,
-    trie: &'trie T,
-    phantom: PhantomData<V>,
+    delegate: CharsWithHandler<'slice, TrieUtf8Handler<'trie, T, V>>,
 }
 
 impl<'slice, 'trie, T, V> CharsWithTrie<'slice, 'trie, T, V>
@@ -41,19 +290,14 @@ where
     #[inline]
     pub fn new(s: &'slice str, trie: &'trie T) -> Self {
         Self {
-            delegate: s.as_bytes().iter(),
-            trie,
-            phantom: PhantomData,
+            delegate: CharsWithHandler::new(s, TrieUtf8Handler::new(trie)),
         }
     }
 
     /// Obtains the remainder of the iterator as a string slice.
     #[inline]
     pub fn as_str(&self) -> &'slice str {
-        // SAFETY: OK, because `delegate` came from `str` and is always
-        // advanced in a way that leaves the iterator at an UTF-8 sequence
-        // boundary.
-        unsafe { core::str::from_utf8_unchecked(self.delegate.as_slice()) }
+        self.delegate.as_str()
     }
 }
 
@@ -62,12 +306,9 @@ where
     V: TrieValue,
     T: AbstractCodePointTrie<'trie, V>,
 {
-    #[inline]
     fn clone(&self) -> Self {
         Self {
             delegate: self.delegate.clone(),
-            trie: self.trie,
-            phantom: PhantomData,
         }
     }
 }
@@ -79,7 +320,7 @@ where
 {
     #[inline]
     fn trie(&self) -> &'trie T {
-        self.trie
+        self.delegate.handler().trie()
     }
 }
 
@@ -92,68 +333,7 @@ where
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let lead = *self.delegate.next()?;
-        if lead < 0x80 {
-            // SAFETY: We checked the invariant of `ascii` immediately
-            // above.
-            return Some((char::from(lead), unsafe { self.trie.ascii(lead) }));
-        }
-        // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, we may assume that we
-        // have a valid lead byte. Not need to check for other cases.
-        if lead < 0xE0 {
-            // Two-byte sequence.
-            // SAFETY, since `delegate` came from `str` and we always advance by a full UTF-8 sequence, we may assume the
-            // presence of a trail byte.
-            let trail = *unsafe { self.delegate.next().unwrap_unchecked() };
-            let high_five = u32::from(lead & 0b11_111);
-            let low_six = u32::from(trail & 0b111_111);
-            // SAFETY: By construction, `high_five` and `low_six` conform
-            // to the invariant of `utf8_two_byte`.
-            let v = unsafe { self.trie.utf8_two_byte(high_five, low_six) };
-            // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `lead` must be a
-            // valid (not overlong) two-byte lead and `trail` must be a valid
-            // trail. Therefore, the following shift and OR stays in the
-            // scalar value range.
-            let c = unsafe { char::from_u32_unchecked((high_five << 6) | low_six) };
-            return Some((c, v));
-        }
-        if lead < 0xF0 {
-            // Three-byte sequence.
-            // SAFETY, since `delegate` came from `str` and we always advance by a full UTF-8 sequence, we may assume the
-            // presence of two trail bytes.
-            let second = *unsafe { self.delegate.next().unwrap_unchecked() };
-            let third = *unsafe { self.delegate.next().unwrap_unchecked() };
-            let high_ten = (u32::from(lead & 0b1111) << 6) | u32::from(second & 0b111_111);
-            let low_six = u32::from(third & 0b111_111);
-            // SAFETY: By construction, `high_ten` and `low_six` conform
-            // to the invariant of `utf8_three_byte`.
-            let v = unsafe { self.trie.utf8_three_byte(high_ten, low_six) };
-            // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `lead` must be a
-            // valid (not overlong) three-byte lead and `second` and `third`
-            // must be valid trails. Therefore, the following shift and OR
-            // stays in the scalar value range.
-            let c = unsafe { char::from_u32_unchecked((high_ten << 6) | low_six) };
-            return Some((c, v));
-        }
-        // Four-byte sequence
-        // SAFETY, since `delegate` came from `str` and we always advance by a full UTF-8 sequence, we may assume the
-        // presence of three trail bytes.
-        let second = *unsafe { self.delegate.next().unwrap_unchecked() };
-        let third = *unsafe { self.delegate.next().unwrap_unchecked() };
-        let fourth = *unsafe { self.delegate.next().unwrap_unchecked() };
-        // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `lead` must be a
-        // valid (not overlong or out-of-range) four-byte lead and `second`,
-        // `third`, and `fourth` must be valid trails. Therefore, the
-        // following shift and OR stays in the scalar value range.
-        let c = unsafe {
-            char::from_u32_unchecked(
-                (u32::from(lead & 0b111) << 18)
-                    | (u32::from(second & 0b111_111) << 12)
-                    | (u32::from(third & 0b111_111) << 6)
-                    | u32::from(fourth & 0b111_111),
-            )
-        };
-        Some((c, self.trie.supplementary(c as u32)))
+        self.delegate.next()
     }
 
     #[inline]
@@ -181,66 +361,7 @@ where
 {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        let last = *self.delegate.next_back()?;
-        if last < 0x80 {
-            // SAFETY: We checked the invariant of `ascii` immediately
-            // above.
-            return Some((char::from(last), unsafe { self.trie.ascii(last) }));
-        }
-        // SAFETY Since `delegate` came from `str` and we always advance by a full UTF-8 sequence,
-        // `last` must be a valid trail byte and it is preceded either by a lead byte for a
-        // two-byte sequence or by another trail byte.
-        let second_last = *unsafe { self.delegate.next_back().unwrap_unchecked() };
-        if second_last >= 0b1100_0000 {
-            // Two-byte sequence.
-            let high_five = u32::from(second_last & 0b11_111);
-            let low_six = u32::from(last & 0b111_111);
-            // SAFETY: By construction, `high_five` and `low_six` conform
-            // to the invariant of `utf8_two_byte`.
-            let v = unsafe { self.trie.utf8_two_byte(high_five, low_six) };
-            // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `second_last` must be a
-            // valid (not overlong) two-byte lead and `last` must be a valid
-            // trail. Therefore, the following shift and OR stays in the
-            // scalar value range.
-            let c = unsafe { char::from_u32_unchecked((high_five << 6) | low_six) };
-            return Some((c, v));
-        }
-        // SAFETY Since `delegate` came from `str` and we always advance by a full UTF-8 sequence,
-        // `second_last` must be a valid trail byte and it is preceded either by a lead byte for a
-        // three-byte sequence or by another trail byte.
-        let third_last = *unsafe { self.delegate.next_back().unwrap_unchecked() };
-        if third_last >= 0b1100_0000 {
-            // Three-byte sequence
-            let high_ten =
-                (u32::from(third_last & 0b1111) << 6) | u32::from(second_last & 0b111_111);
-            let low_six = u32::from(last & 0b111_111);
-            // SAFETY: By construction, `high_ten` and `low_six` conform
-            // to the invariant of `utf8_three_byte`.
-            let v = unsafe { self.trie.utf8_three_byte(high_ten, low_six) };
-            // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `third_last` must be a
-            // valid (not overlong) three-byte lead and `second_last` and `last`
-            // must be valid trails. Therefore, the following shift and OR
-            // stays in the scalar value range.
-            let c = unsafe { char::from_u32_unchecked((high_ten << 6) | low_six) };
-            return Some((c, v));
-        }
-        // Four-byte sequence
-        // SAFETY, since `delegate` came from `str` and we always advance by a full UTF-8 sequence, we may assume the
-        // presence of a lead byte.
-        let lead = *unsafe { self.delegate.next_back().unwrap_unchecked() };
-        // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `lead` must be a
-        // valid (not overlong or out-of-range) four-byte lead and `third_last`,
-        // `second_last`, and `last` must be valid trails. Therefore, the
-        // following shift and OR stays in the scalar value range.
-        let c = unsafe {
-            char::from_u32_unchecked(
-                (u32::from(lead & 0b111) << 18)
-                    | (u32::from(third_last & 0b111_111) << 12)
-                    | (u32::from(second_last & 0b111_111) << 6)
-                    | u32::from(last & 0b111_111),
-            )
-        };
-        Some((c, self.trie.supplementary(c as u32)))
+        self.delegate.next_back()
     }
 }
 
@@ -259,8 +380,7 @@ where
     V: TrieValue,
     T: AbstractCodePointTrie<'trie, V>,
 {
-    offset: usize,
-    delegate: CharsWithTrie<'slice, 'trie, T, V>,
+    delegate: CharIndicesWithHandler<'slice, TrieUtf8Handler<'trie, T, V>>,
 }
 
 impl<'slice, 'trie, T, V> CharIndicesWithTrie<'slice, 'trie, T, V>
@@ -272,8 +392,7 @@ where
     #[inline]
     pub fn new(s: &'slice str, trie: &'trie T) -> Self {
         Self {
-            offset: 0,
-            delegate: CharsWithTrie::new(s, trie),
+            delegate: CharIndicesWithHandler::new(s, TrieUtf8Handler::new(trie)),
         }
     }
 
@@ -292,7 +411,6 @@ where
     #[inline]
     fn clone(&self) -> Self {
         Self {
-            offset: self.offset,
             delegate: self.delegate.clone(),
         }
     }
@@ -305,7 +423,7 @@ where
 {
     #[inline]
     fn trie(&self) -> &'trie T {
-        self.delegate.trie()
+        self.delegate.handler().trie()
     }
 }
 
@@ -318,11 +436,8 @@ where
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let old_len = self.as_str().len();
-        let (c, v) = self.delegate.next()?;
-        let old_offset = self.offset;
-        self.offset += old_len - self.as_str().len();
-        Some((old_offset, c, v))
+        let (i, (c, v)) = self.delegate.next()?;
+        Some((i, c, v))
     }
 
     #[inline]
@@ -337,6 +452,7 @@ where
 
     #[inline]
     fn last(mut self) -> Option<Self::Item> {
+        // XXX: Is this correct when it doesn't change the internal state as consumed?
         self.next_back()
     }
 
@@ -350,8 +466,8 @@ where
 {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        let (c, v) = self.delegate.next_back()?;
-        Some((self.offset + self.as_str().len(), c, v))
+        let (i, (c, v)) = self.delegate.next_back()?;
+        Some((i, c, v))
     }
 }
 
@@ -414,9 +530,7 @@ where
     V: TrieValue + Default,
     T: AbstractCodePointTrie<'trie, V>,
 {
-    delegate: core::slice::Iter<'slice, u8>,
-    trie: &'trie T,
-    phantom: PhantomData<V>,
+    delegate: CharsWithHandler<'slice, TrieUtf8HandlerDefaultForAscii<'trie, T, V>>,
 }
 
 impl<'slice, 'trie, T, V> CharsWithTrieDefaultForAscii<'slice, 'trie, T, V>
@@ -428,19 +542,14 @@ where
     #[inline]
     pub fn new(s: &'slice str, trie: &'trie T) -> Self {
         Self {
-            delegate: s.as_bytes().iter(),
-            trie,
-            phantom: PhantomData,
+            delegate: CharsWithHandler::new(s, TrieUtf8HandlerDefaultForAscii::new(trie)),
         }
     }
 
     /// Obtains the remainder of the iterator as a string slice.
     #[inline]
     pub fn as_str(&self) -> &'slice str {
-        // SAFETY: OK, because `delegate` came from `str` and is always
-        // advanced in a way that leaves the iterator at an UTF-8 sequence
-        // boundary.
-        unsafe { core::str::from_utf8_unchecked(self.delegate.as_slice()) }
+        self.delegate.as_str()
     }
 }
 
@@ -449,12 +558,9 @@ where
     V: TrieValue + Default,
     T: AbstractCodePointTrie<'trie, V>,
 {
-    #[inline]
     fn clone(&self) -> Self {
         Self {
             delegate: self.delegate.clone(),
-            trie: self.trie,
-            phantom: PhantomData,
         }
     }
 }
@@ -467,7 +573,7 @@ where
 {
     #[inline]
     fn trie(&self) -> &'trie T {
-        self.trie
+        self.delegate.handler().trie()
     }
 }
 
@@ -480,68 +586,7 @@ where
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let lead = *self.delegate.next()?;
-        if lead < 0x80 {
-            // SAFETY: We checked the invariant of `ascii` immediately
-            // above.
-            return Some((char::from(lead), V::default()));
-        }
-        // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, we may assume that we
-        // have a valid lead byte. Not need to check for other cases.
-        if lead < 0xE0 {
-            // Two-byte sequence.
-            // SAFETY, since `delegate` came from `str` and we always advance by a full UTF-8 sequence, we may assume the
-            // presence of a trail byte.
-            let trail = *unsafe { self.delegate.next().unwrap_unchecked() };
-            let high_five = u32::from(lead & 0b11_111);
-            let low_six = u32::from(trail & 0b111_111);
-            // SAFETY: By construction, `high_five` and `low_six` conform
-            // to the invariant of `utf8_two_byte`.
-            let v = unsafe { self.trie.utf8_two_byte(high_five, low_six) };
-            // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `lead` must be a
-            // valid (not overlong) two-byte lead and `trail` must be a valid
-            // trail. Therefore, the following shift and OR stays in the
-            // scalar value range.
-            let c = unsafe { char::from_u32_unchecked((high_five << 6) | low_six) };
-            return Some((c, v));
-        }
-        if lead < 0xF0 {
-            // Three-byte sequence.
-            // SAFETY, since `delegate` came from `str` and we always advance by a full UTF-8 sequence, we may assume the
-            // presence of two trail bytes.
-            let second = *unsafe { self.delegate.next().unwrap_unchecked() };
-            let third = *unsafe { self.delegate.next().unwrap_unchecked() };
-            let high_ten = (u32::from(lead & 0b1111) << 6) | u32::from(second & 0b111_111);
-            let low_six = u32::from(third & 0b111_111);
-            // SAFETY: By construction, `high_ten` and `low_six` conform
-            // to the invariant of `utf8_three_byte`.
-            let v = unsafe { self.trie.utf8_three_byte(high_ten, low_six) };
-            // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `lead` must be a
-            // valid (not overlong) three-byte lead and `second` and `third`
-            // must be valid trails. Therefore, the following shift and OR
-            // stays in the scalar value range.
-            let c = unsafe { char::from_u32_unchecked((high_ten << 6) | low_six) };
-            return Some((c, v));
-        }
-        // Four-byte sequence
-        // SAFETY, since `delegate` came from `str` and we always advance by a full UTF-8 sequence, we may assume the
-        // presence of three trail bytes.
-        let second = *unsafe { self.delegate.next().unwrap_unchecked() };
-        let third = *unsafe { self.delegate.next().unwrap_unchecked() };
-        let fourth = *unsafe { self.delegate.next().unwrap_unchecked() };
-        // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `lead` must be a
-        // valid (not overlong or out-of-range) four-byte lead and `second`,
-        // `third`, and `fourth` must be valid trails. Therefore, the
-        // following shift and OR stays in the scalar value range.
-        let c = unsafe {
-            char::from_u32_unchecked(
-                (u32::from(lead & 0b111) << 18)
-                    | (u32::from(second & 0b111_111) << 12)
-                    | (u32::from(third & 0b111_111) << 6)
-                    | u32::from(fourth & 0b111_111),
-            )
-        };
-        Some((c, self.trie.supplementary(c as u32)))
+        self.delegate.next()
     }
 
     #[inline]
@@ -569,66 +614,7 @@ where
 {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        let last = *self.delegate.next_back()?;
-        if last < 0x80 {
-            // SAFETY: We checked the invariant of `ascii` immediately
-            // above.
-            return Some((char::from(last), V::default()));
-        }
-        // SAFETY Since `delegate` came from `str` and we always advance by a full UTF-8 sequence,
-        // `last` must be a valid trail byte and it is preceded either by a lead byte for a
-        // two-byte sequence or by another trail byte.
-        let second_last = *unsafe { self.delegate.next_back().unwrap_unchecked() };
-        if second_last >= 0b1100_0000 {
-            // Two-byte sequence.
-            let high_five = u32::from(second_last & 0b11_111);
-            let low_six = u32::from(last & 0b111_111);
-            // SAFETY: By construction, `high_five` and `low_six` conform
-            // to the invariant of `utf8_two_byte`.
-            let v = unsafe { self.trie.utf8_two_byte(high_five, low_six) };
-            // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `second_last` must be a
-            // valid (not overlong) two-byte lead and `last` must be a valid
-            // trail. Therefore, the following shift and OR stays in the
-            // scalar value range.
-            let c = unsafe { char::from_u32_unchecked((high_five << 6) | low_six) };
-            return Some((c, v));
-        }
-        // SAFETY Since `delegate` came from `str` and we always advance by a full UTF-8 sequence,
-        // `second_last` must be a valid trail byte and it is preceded either by a lead byte for a
-        // three-byte sequence or by another trail byte.
-        let third_last = *unsafe { self.delegate.next_back().unwrap_unchecked() };
-        if third_last >= 0b1100_0000 {
-            // Three-byte sequence
-            let high_ten =
-                (u32::from(third_last & 0b1111) << 6) | u32::from(second_last & 0b111_111);
-            let low_six = u32::from(last & 0b111_111);
-            // SAFETY: By construction, `high_ten` and `low_six` conform
-            // to the invariant of `utf8_three_byte`.
-            let v = unsafe { self.trie.utf8_three_byte(high_ten, low_six) };
-            // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `third_last` must be a
-            // valid (not overlong) three-byte lead and `second_last` and `last`
-            // must be valid trails. Therefore, the following shift and OR
-            // stays in the scalar value range.
-            let c = unsafe { char::from_u32_unchecked((high_ten << 6) | low_six) };
-            return Some((c, v));
-        }
-        // Four-byte sequence
-        // SAFETY, since `delegate` came from `str` and we always advance by a full UTF-8 sequence, we may assume the
-        // presence of a lead byte.
-        let lead = *unsafe { self.delegate.next_back().unwrap_unchecked() };
-        // SAFETY: Since `delegate` came from `str` and we always advance by a full UTF-8 sequence, `lead` must be a
-        // valid (not overlong or out-of-range) four-byte lead and `third_last`,
-        // `second_last`, and `last` must be valid trails. Therefore, the
-        // following shift and OR stays in the scalar value range.
-        let c = unsafe {
-            char::from_u32_unchecked(
-                (u32::from(lead & 0b111) << 18)
-                    | (u32::from(third_last & 0b111_111) << 12)
-                    | (u32::from(second_last & 0b111_111) << 6)
-                    | u32::from(last & 0b111_111),
-            )
-        };
-        Some((c, self.trie.supplementary(c as u32)))
+        self.delegate.next_back()
     }
 }
 
@@ -647,8 +633,7 @@ where
     V: TrieValue + Default,
     T: AbstractCodePointTrie<'trie, V>,
 {
-    offset: usize,
-    delegate: CharsWithTrieDefaultForAscii<'slice, 'trie, T, V>,
+    delegate: CharIndicesWithHandler<'slice, TrieUtf8HandlerDefaultForAscii<'trie, T, V>>,
 }
 
 impl<'slice, 'trie, T, V> CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V>
@@ -660,8 +645,7 @@ where
     #[inline]
     pub fn new(s: &'slice str, trie: &'trie T) -> Self {
         Self {
-            offset: 0,
-            delegate: CharsWithTrieDefaultForAscii::new(s, trie),
+            delegate: CharIndicesWithHandler::new(s, TrieUtf8HandlerDefaultForAscii::new(trie)),
         }
     }
 
@@ -680,7 +664,6 @@ where
     #[inline]
     fn clone(&self) -> Self {
         Self {
-            offset: self.offset,
             delegate: self.delegate.clone(),
         }
     }
@@ -694,7 +677,7 @@ where
 {
     #[inline]
     fn trie(&self) -> &'trie T {
-        self.delegate.trie()
+        self.delegate.handler().trie()
     }
 }
 
@@ -707,11 +690,8 @@ where
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        let old_len = self.as_str().len();
-        let (c, v) = self.delegate.next()?;
-        let old_offset = self.offset;
-        self.offset += old_len - self.as_str().len();
-        Some((old_offset, c, v))
+        let (i, (c, v)) = self.delegate.next()?;
+        Some((i, c, v))
     }
 
     #[inline]
@@ -726,6 +706,7 @@ where
 
     #[inline]
     fn last(mut self) -> Option<Self::Item> {
+        // XXX: Is this correct when it doesn't change the internal state as consumed?
         self.next_back()
     }
 
@@ -740,8 +721,8 @@ where
 {
     #[inline]
     fn next_back(&mut self) -> Option<Self::Item> {
-        let (c, v) = self.delegate.next_back()?;
-        Some((self.offset + self.as_str().len(), c, v))
+        let (i, (c, v)) = self.delegate.next_back()?;
+        Some((i, c, v))
     }
 }
 
@@ -794,6 +775,520 @@ where
         trie: &'trie T,
     ) -> CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V> {
         CharIndicesWithTrieDefaultForAscii::new(self, trie)
+    }
+}
+
+// --
+
+/// Iterator over `str` by `char` and `TrieValue`.
+#[derive(Debug)]
+pub struct Utf8CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    delegate: Utf8CharsWithHandler<'slice, TrieUtf8Handler<'trie, T, V>>,
+}
+
+impl<'slice, 'trie, T, V> Utf8CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Construct a new `Utf8CharsWithTrie`.
+    #[inline]
+    pub fn new(bytes: &'slice [u8], trie: &'trie T) -> Self {
+        Self {
+            delegate: Utf8CharsWithHandler::new(bytes, TrieUtf8Handler::new(trie)),
+        }
+    }
+
+    /// Obtains the remainder of the iterator as a string slice.
+    #[inline]
+    pub fn as_slice(&self) -> &'slice [u8] {
+        self.delegate.as_slice()
+    }
+}
+
+impl<'slice, 'trie, T, V> Clone for Utf8CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            delegate: self.delegate.clone(),
+        }
+    }
+}
+
+impl<'slice, 'trie, T, V> WithTrie<'trie, T, V> for Utf8CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn trie(&self) -> &'trie T {
+        self.delegate.handler().trie()
+    }
+}
+
+impl<'slice, 'trie, T, V> Iterator for Utf8CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    type Item = (char, V);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.delegate.next()
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.as_slice().chars().count()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.as_slice().chars().size_hint()
+    }
+
+    #[inline]
+    fn last(mut self) -> Option<Self::Item> {
+        self.next_back()
+    }
+
+    // TODO: Delegate advance_by to `Chars` once stabilized.
+}
+
+impl<'slice, 'trie, T, V> DoubleEndedIterator for Utf8CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.delegate.next_back()
+    }
+}
+
+impl<'slice, 'trie, T, V> FusedIterator for Utf8CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+}
+// --
+
+/// Iterator over `str` by `char` and `TrieValue`.
+#[derive(Debug)]
+pub struct Utf8CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    delegate: Utf8CharIndicesWithHandler<'slice, TrieUtf8Handler<'trie, T, V>>,
+}
+
+impl<'slice, 'trie, T, V> Utf8CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Construct a new `Utf8CharIndicesWithTrie`.
+    #[inline]
+    pub fn new(bytes: &'slice [u8], trie: &'trie T) -> Self {
+        Self {
+            delegate: Utf8CharIndicesWithHandler::new(bytes, TrieUtf8Handler::new(trie)),
+        }
+    }
+
+    /// Obtains the remainder of the iterator as a string slice.
+    #[inline]
+    pub fn as_slice(&self) -> &'slice [u8] {
+        self.delegate.as_slice()
+    }
+}
+
+impl<'slice, 'trie, T, V> Clone for Utf8CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            delegate: self.delegate.clone(),
+        }
+    }
+}
+
+impl<'slice, 'trie, T, V> WithTrie<'trie, T, V> for Utf8CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn trie(&self) -> &'trie T {
+        self.delegate.handler().trie()
+    }
+}
+
+impl<'slice, 'trie, T, V> Iterator for Utf8CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    type Item = (usize, char, V);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let (i, (c, v)) = self.delegate.next()?;
+        Some((i, c, v))
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.as_slice().chars().count()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.as_slice().chars().size_hint()
+    }
+
+    #[inline]
+    fn last(mut self) -> Option<Self::Item> {
+        // XXX: Is this correct when it doesn't change the internal state as consumed?
+        self.next_back()
+    }
+
+    // TODO: Delegate advance_by to `Chars` once stabilized.
+}
+
+impl<'slice, 'trie, T, V> DoubleEndedIterator for Utf8CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let (i, (c, v)) = self.delegate.next_back()?;
+        Some((i, c, v))
+    }
+}
+
+impl<'slice, 'trie, T, V> FusedIterator for Utf8CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+}
+
+// --
+
+/// Adds convenience methods to `&[u8]`.
+pub trait Utf8CharsWithTrieEx<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Method for easily creating `Utf8CharsWithTrie` on `str` analogously to `chars()`.
+    fn chars_with_trie(&'slice self, trie: &'trie T) -> Utf8CharsWithTrie<'slice, 'trie, T, V>;
+
+    /// Method for easily creating `Utf8CharIndicesWithTrie` on `str` analogously to `char_indices()`.
+    fn char_indices_with_trie(
+        &'slice self,
+        trie: &'trie T,
+    ) -> Utf8CharIndicesWithTrie<'slice, 'trie, T, V>;
+}
+
+impl<'slice, 'trie, T, V> Utf8CharsWithTrieEx<'slice, 'trie, T, V> for [u8]
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Method for easily creating `Utf8CharsWithTrie` on `str` analogously to `chars()`.
+    #[inline]
+    fn chars_with_trie(&'slice self, trie: &'trie T) -> Utf8CharsWithTrie<'slice, 'trie, T, V> {
+        Utf8CharsWithTrie::new(self, trie)
+    }
+
+    /// Method for easily creating `Utf8CharIndicesWithTrie` on `str` analogously to `char_indices()`.
+    #[inline]
+    fn char_indices_with_trie(
+        &'slice self,
+        trie: &'trie T,
+    ) -> Utf8CharIndicesWithTrie<'slice, 'trie, T, V> {
+        Utf8CharIndicesWithTrie::new(self, trie)
+    }
+}
+
+// --
+
+/// Iterator over `str` by `char` and `TrieValue` but
+/// the trie value for ASCII is `V::default()` instead of
+/// reading from the trie. (`V::default()` can be optimized
+/// on at compile time while reading the trie's default value
+/// is a run-time operation.)
+#[derive(Debug)]
+pub struct Utf8CharsWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    delegate: Utf8CharsWithHandler<'slice, TrieUtf8HandlerDefaultForAscii<'trie, T, V>>,
+}
+
+impl<'slice, 'trie, T, V> Utf8CharsWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Construct a new `Utf8CharsWithTrieDefaultForAscii`.
+    #[inline]
+    pub fn new(bytes: &'slice [u8], trie: &'trie T) -> Self {
+        Self {
+            delegate: Utf8CharsWithHandler::new(bytes, TrieUtf8HandlerDefaultForAscii::new(trie)),
+        }
+    }
+
+    /// Obtains the remainder of the iterator as a string slice.
+    #[inline]
+    pub fn as_slice(&self) -> &'slice [u8] {
+        self.delegate.as_slice()
+    }
+}
+
+impl<'slice, 'trie, T, V> Clone for Utf8CharsWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    fn clone(&self) -> Self {
+        Self {
+            delegate: self.delegate.clone(),
+        }
+    }
+}
+
+impl<'slice, 'trie, T, V> WithTrie<'trie, T, V>
+    for Utf8CharsWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn trie(&self) -> &'trie T {
+        self.delegate.handler().trie()
+    }
+}
+
+impl<'slice, 'trie, T, V> Iterator for Utf8CharsWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    type Item = (char, V);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.delegate.next()
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.as_slice().chars().count()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.as_slice().chars().size_hint()
+    }
+
+    #[inline]
+    fn last(mut self) -> Option<Self::Item> {
+        self.next_back()
+    }
+
+    // TODO: Delegate advance_by to `Chars` once stabilized.
+}
+
+impl<'slice, 'trie, T, V> DoubleEndedIterator
+    for Utf8CharsWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.delegate.next_back()
+    }
+}
+
+impl<'slice, 'trie, T, V> FusedIterator for Utf8CharsWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+}
+// --
+
+/// Iterator over `str` by `char` and `TrieValue`.
+#[derive(Debug)]
+pub struct Utf8CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    delegate: Utf8CharIndicesWithHandler<'slice, TrieUtf8HandlerDefaultForAscii<'trie, T, V>>,
+}
+
+impl<'slice, 'trie, T, V> Utf8CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Construct a new `Utf8CharIndicesWithTrieDefaultForAscii`.
+    #[inline]
+    pub fn new(bytes: &'slice [u8], trie: &'trie T) -> Self {
+        Self {
+            delegate: Utf8CharIndicesWithHandler::new(
+                bytes,
+                TrieUtf8HandlerDefaultForAscii::new(trie),
+            ),
+        }
+    }
+
+    /// Obtains the remainder of the iterator as a string slice.
+    #[inline]
+    pub fn as_slice(&self) -> &'slice [u8] {
+        self.delegate.as_slice()
+    }
+}
+
+impl<'slice, 'trie, T, V> Clone for Utf8CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            delegate: self.delegate.clone(),
+        }
+    }
+}
+
+impl<'slice, 'trie, T, V> WithTrie<'trie, T, V>
+    for Utf8CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn trie(&self) -> &'trie T {
+        self.delegate.handler().trie()
+    }
+}
+
+impl<'slice, 'trie, T, V> Iterator for Utf8CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    type Item = (usize, char, V);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let (i, (c, v)) = self.delegate.next()?;
+        Some((i, c, v))
+    }
+
+    #[inline]
+    fn count(self) -> usize {
+        self.as_slice().chars().count()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.as_slice().chars().size_hint()
+    }
+
+    #[inline]
+    fn last(mut self) -> Option<Self::Item> {
+        // XXX: Is this correct when it doesn't change the internal state as consumed?
+        self.next_back()
+    }
+
+    // TODO: Delegate advance_by to `Chars` once stabilized.
+}
+
+impl<'slice, 'trie, T, V> DoubleEndedIterator
+    for Utf8CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    #[inline]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let (i, (c, v)) = self.delegate.next_back()?;
+        Some((i, c, v))
+    }
+}
+
+impl<'slice, 'trie, T, V> FusedIterator
+    for Utf8CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+}
+
+// --
+
+/// Adds convenience methods to `[u8]`.
+pub trait Utf8CharsWithTrieDefaultForAsciiEx<'slice, 'trie, T, V>
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Method for easily creating `Utf8CharsWithTrie` on `str` analogously to `chars()`.
+    fn chars_with_trie_default_for_ascii(
+        &'slice self,
+        trie: &'trie T,
+    ) -> Utf8CharsWithTrieDefaultForAscii<'slice, 'trie, T, V>;
+
+    /// Method for easily creating `Utf8CharIndicesWithTrie` on `str` analogously to `char_indices()`.
+    fn char_indices_with_trie_default_for_ascii(
+        &'slice self,
+        trie: &'trie T,
+    ) -> Utf8CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V>;
+}
+
+impl<'slice, 'trie, T, V> Utf8CharsWithTrieDefaultForAsciiEx<'slice, 'trie, T, V> for [u8]
+where
+    V: TrieValue + Default,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+    /// Method for easily creating `Utf8CharsWithTrie` on `str` analogously to `chars()`.
+    #[inline]
+    fn chars_with_trie_default_for_ascii(
+        &'slice self,
+        trie: &'trie T,
+    ) -> Utf8CharsWithTrieDefaultForAscii<'slice, 'trie, T, V> {
+        Utf8CharsWithTrieDefaultForAscii::new(self, trie)
+    }
+
+    /// Method for easily creating `Utf8CharIndicesWithTrie` on `str` analogously to `char_indices()`.
+    #[inline]
+    fn char_indices_with_trie_default_for_ascii(
+        &'slice self,
+        trie: &'trie T,
+    ) -> Utf8CharIndicesWithTrieDefaultForAscii<'slice, 'trie, T, V> {
+        Utf8CharIndicesWithTrieDefaultForAscii::new(self, trie)
     }
 }
 

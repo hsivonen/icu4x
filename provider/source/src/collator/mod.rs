@@ -253,7 +253,6 @@ fn rewrite_reorderable(
     ce32s: &mut Vec<u32>,
     ccc: &CanonicalCombiningClassMapBorrowed<'_>,
 ) -> u32 {
-
     let ce32 = CollationElement32::new(ce32);
     let tag = ce32.tag_checked();
     if let Some(ref t) = tag {

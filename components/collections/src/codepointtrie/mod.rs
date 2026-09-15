@@ -63,4 +63,8 @@ pub use iter::CharsWithTrieEx;
 pub use iter::Latin1CharIndicesWithTrie;
 pub use iter::Latin1CharsWithTrie;
 pub use iter::Latin1CharsWithTrieEx;
+pub use iter::Utf8CharsWithTrie;
+pub use iter::Utf8CharsWithTrieDefaultForAscii;
+pub use iter::Utf8CharsWithTrieDefaultForAsciiEx;
+pub use iter::Utf8CharsWithTrieEx;
 pub use iter::WithTrie;

@@ -1361,6 +1361,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+ "utf8_iter",
  "yoke",
  "zerofrom",
  "zerovec",
@@ -3369,9 +3370,6 @@ dependencies = [
 [[package]]
 name = "utf8_iter"
 version = "1.0.4"
-dependencies = [
- "icu_collections",
-]
 
 [[package]]
 name = "utf8parse"

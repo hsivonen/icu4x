@@ -112,6 +112,8 @@ use icu_collections::codepointtrie::CharIterWithTrie;
 use icu_collections::codepointtrie::CharsWithTrieDefaultForAsciiEx;
 use icu_collections::codepointtrie::CodePointTrie;
 use icu_collections::codepointtrie::FastCodePointTrie;
+#[cfg(feature = "utf8_iter")]
+use icu_collections::codepointtrie::Utf8CharsWithTrieDefaultForAsciiEx;
 use icu_collections::codepointtrie::WithTrie;
 #[cfg(feature = "icu_properties")]
 use icu_properties::props::CanonicalCombiningClass;
@@ -127,8 +129,6 @@ use smallvec::SmallVec;
 use utf16_iter::Utf16CharsWithTrieEx;
 #[cfg(feature = "utf8_iter")]
 use utf8_iter::Utf8CharsEx;
-#[cfg(feature = "utf8_iter")]
-use utf8_iter::Utf8CharsWithTrieDefaultForAsciiEx;
 use zerovec::{zeroslice, ZeroSlice};
 
 // The optimizations in the area where `likely` is used
