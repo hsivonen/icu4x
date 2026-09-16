@@ -16,7 +16,7 @@ use crate::NormalizerNfcV2;
 use crate::NormalizerNfdTablesV1;
 use crate::NormalizerNfkdTablesV1;
 use crate::NormalizerUts46DataV1;
-use icu_collections::codepointtrie::CharIterWithTrie;
+use icu_collections::codepointtrie::iter::CharIterWithTrie;
 use icu_collections::codepointtrie::CodePointTrie;
 use icu_provider::DataError;
 use icu_provider::DataProvider;

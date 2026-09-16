@@ -24,7 +24,7 @@ fn strip_headers(content: &str) -> String {
         .join("\n")
 }
 
-fn normalizer_bench_data() -> [BenchDataContent; 16] {
+fn normalizer_bench_data() -> [BenchDataContent; 15] {
     let nfc_normalizer = ComposingNormalizerBorrowed::new_nfc();
 
     [
@@ -105,15 +105,15 @@ fn normalizer_bench_data() -> [BenchDataContent; 16] {
                 &nfc_normalizer.normalize(&strip_headers(include_str!("./data/Carroll-11-ru.txt"))),
             ),
         },
-        BenchDataContent {
-            file_name: "TestRandomWordsUDHR_th".to_owned(),
-            #[cfg(debug_assertions)]
-            pairs: Vec::new(),
-            #[cfg(not(debug_assertions))]
-            pairs: decompose_data(&nfc_normalizer.normalize(&strip_headers(include_str!(
-                "./data/TestRandomWordsUDHR_th.txt"
-            )))),
-        },
+        // BenchDataContent {
+        //     file_name: "TestRandomWordsUDHR_th".to_owned(),
+        //     #[cfg(debug_assertions)]
+        //     pairs: Vec::new(),
+        //     #[cfg(not(debug_assertions))]
+        //     pairs: decompose_data(&nfc_normalizer.normalize(&strip_headers(include_str!(
+        //         "./data/TestRandomWordsUDHR_th.txt"
+        //     )))),
+        // },
         BenchDataContent {
             file_name: "Carroll-11-tr".to_owned(),
             pairs: decompose_data(

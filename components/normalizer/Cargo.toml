@@ -26,7 +26,7 @@ icu_properties = { workspace = true, optional = true }
 icu_provider = { workspace = true }
 smallvec = { workspace = true } # alloc
 utf16_iter = { path = "../../../utf16_iter", optional = true }
-utf8_iter = { path = "../../../utf8_iter", optional = true }
+utf8_iter = { path = "../../../utf8_iter" } # Not optional because used for `str`
 write16 = { workspace = true, features = ["alloc"], optional = true }
 zerovec = { workspace = true }
 zerofrom = { workspace = true, features = ["alloc"] }
@@ -59,7 +59,7 @@ icu_properties = ["dep:icu_properties"]
 # For dealing with UTF16 strings
 utf16_iter = ["dep:utf16_iter", "dep:write16"]
 # For dealing with potentially ill-formed UTF8 strings
-utf8_iter = ["dep:utf8_iter"]
+utf8_iter = [] # The dep is actually used for the `str` case anyway
 # For dealing with Latin1 strings
 latin1 = ["dep:write16"]
 harfbuzz_traits = ["dep:harfbuzz-traits"]

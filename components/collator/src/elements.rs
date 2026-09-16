@@ -21,8 +21,8 @@
 use core::char::REPLACEMENT_CHARACTER;
 use core::marker::PhantomData;
 use icu_collections::char16trie::TrieResult;
+use icu_collections::codepointtrie::iter::WithTrie;
 use icu_collections::codepointtrie::AbstractCodePointTrie;
-use icu_collections::codepointtrie::WithTrie;
 use icu_normalizer::provider::DecompositionTables;
 use icu_properties::props::CanonicalCombiningClass;
 use smallvec::SmallVec;

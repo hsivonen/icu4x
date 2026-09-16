@@ -1535,25 +1535,125 @@ impl<T: TrieValue> Iterator for CodePointMapRangeIterator<'_, T> {
     }
 }
 
-/// For sealing `TypedCodePointTrie`
+/// For sealing `TypedCodePointTrie`, `TypedCodePointTriePrivate`,
+// `AbstractCodePointTrie`, and `AbstractCodePointTriePrivate`
 ///
 /// # Safety Usable Invariant
 ///
-/// All implementations of `TypedCodePointTrie` are reviewable in this module.
+/// All implementations of `TypedCodePointTrie`, `TypedCodePointTriePrivate`,
+// `AbstractCodePointTrie`, and `AbstractCodePointTriePrivate` are
+// reviewable in this module.
 trait Seal {}
 
 impl<'trie, T: TrieValue> Seal for CodePointTrie<'trie, T> {}
 
+/// Trait for the the UTF-8-related accessors that logically belong on
+/// `TypedCodePointTrie` but that we don't want to offer as a public API
+/// since they are `unsafe` and don't make much sense except from within
+/// the `utf8_iter::Utf8Handler` implementations in the `iter` module.
+#[allow(private_bounds)] // Permit sealing
+pub(crate) trait TypedCodePointTriePrivate<'trie, T: TrieValue>: Seal {
+    /// The `TrieType` associated with this `TypedCodePointTrie`
+    ///
+    /// # Safety Usable Invariant
+    ///
+    /// This constant matches `self.as_untyped_ref_private().header.trie_type`.
+    const TRIE_TYPE_PRIVATE: TrieType;
+
+    /// Lookup trie value by ASCII Code Point without branching on trie type.
+    ///
+    /// # Safety
+    ///
+    /// `ascii` must be less than 128.
+    #[inline(always)]
+    unsafe fn get7(&self, ascii: u8) -> T {
+        self.as_untyped_ref_private().get7(ascii)
+    }
+
+    /// Returns the value that is associated with a two-byte UTF-8 sequence.
+    ///
+    /// `high_five` is the low five bits of the lead byte of a two-byte UTF-8 sequence.
+    /// `low_six` is the low six bits of the trail byte of a two-byte UTF-8 sequence.
+    ///
+    /// # Safety
+    ///
+    /// `high_five` must not have bit positions other than the lowest 5 set to 1.
+    /// `low_six` must not have bit positions other than the lowest 6 set to 1.
+    ///
+    /// # Panics
+    ///
+    /// With debug assertions enabled, panics if the above safety invariants are
+    /// violated or `high_five` represents non-shortest form.
+    #[inline(always)]
+    unsafe fn get_utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
+        self.as_untyped_ref_private()
+            .get_utf8_two_byte(high_five, low_six)
+    }
+
+    /// Returns the value that is associated with a three-byte UTF-8 or WTF-8 sequence.
+    ///
+    /// `high_ten` is the low four bits of the lead byte of three-byte UTF-8 or WTF-8 sequence shifted left by 6 followed by the low six bits of the first trail byte.
+    /// `low_six` is the low six bits of the last trail byte of a three-byte UTF-8 or WTF-8 sequence.
+    ///
+    /// Sequences representing surrogates (WTF-8) are allowed.
+    ///
+    /// # Safety
+    ///
+    /// `high_ten` must not have bit positions other than the lowest 10 set to 1.
+    /// `low_six` must not have bit positions other than the lowest 6 set to 1.
+    ///
+    /// # Panics
+    ///
+    /// With debug assertions enabled, panics if the above safety invariants are
+    /// violated or `high_ten` is out of range for three-byte WTF-8 (or UTF-8)
+    /// sequence.
+    #[inline(always)]
+    #[allow(clippy::unusual_byte_groupings)]
+    unsafe fn get_utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
+        debug_assert!(low_six <= 0b111_111); // Safety invariant.
+        debug_assert!(high_ten <= 0b1111_111_111); // Not actually a _safety_ invariant for this impl.
+        debug_assert!(high_ten > 0b11_111); // Non-shortest form; not safety invariant.
+
+        debug_assert_eq!(
+            Self::TRIE_TYPE_PRIVATE,
+            self.as_untyped_ref_private().header.trie_type
+        );
+        let fast_max = match Self::TRIE_TYPE_PRIVATE {
+            TrieType::Fast => FAST_TYPE_FAST_INDEXING_MAX,
+            TrieType::Small => SMALL_TYPE_FAST_INDEXING_MAX,
+        };
+
+        // Keep only the prefix bits:
+        let max_bit_prefix = fast_max >> FAST_TYPE_SHIFT;
+        if high_ten <= max_bit_prefix {
+            // SAFETY: The caller is responsible for upholding the safety
+            // invariant for `low_six` and we just checked the safety
+            // invariant of `high_ten`.
+            self.as_untyped_ref_private()
+                .get_bit_prefix_suffix_assuming_fast_index(high_ten as usize, low_six as usize)
+        } else {
+            self.as_untyped_ref_private()
+                .get32_by_small_index_cold((high_ten << 6) | low_six)
+        }
+    }
+
+    /// Returns a reference to the wrapped `CodePointTrie`.
+    fn as_untyped_ref_private(&self) -> &CodePointTrie<'trie, T>;
+}
+
 /// Trait for writing trait bounds for monomorphizing over either
 /// `FastCodePointTrie` or `SmallCodePointTrie`.
 #[allow(private_bounds)] // Permit sealing
-pub trait TypedCodePointTrie<'trie, T: TrieValue>: Seal {
+pub trait TypedCodePointTrie<'trie, T>: TypedCodePointTriePrivate<'trie, T>
+where
+    T: TrieValue,
+{
     /// The `TrieType` associated with this `TypedCodePointTrie`
     ///
     /// # Safety Usable Invariant
     ///
     /// This constant matches `self.as_untyped_ref().header.trie_type`.
-    const TRIE_TYPE: TrieType;
+    const TRIE_TYPE: TrieType = Self::TRIE_TYPE_PRIVATE;
 
     /// Lookup trie value as `u32` by Unicode Scalar Value without branching on trie type.
     #[inline(always)]
@@ -1579,16 +1679,6 @@ pub trait TypedCodePointTrie<'trie, T: TrieValue>: Seal {
     #[inline(always)]
     fn get8(&self, latin1: u8) -> T {
         self.as_untyped_ref().get8(latin1)
-    }
-
-    /// Lookup trie value by ASCII Code Point without branching on trie type.
-    ///
-    /// # Safety
-    ///
-    /// `ascii` must be less than 128.
-    #[inline(always)]
-    unsafe fn get7(&self, ascii: u8) -> T {
-        self.as_untyped_ref().get7(ascii)
     }
 
     /// Lookup trie value by non-Basic Multilingual Plane Scalar Value without branching on trie type.
@@ -1652,71 +1742,10 @@ pub trait TypedCodePointTrie<'trie, T: TrieValue>: Seal {
         }
     }
 
-    /// Returns the value that is associated with a two-byte UTF-8 sequence.
-    ///
-    /// `high_five` is the low five bits of the lead byte of a two-byte UTF-8 sequence.
-    /// `low_six` is the low six bits of the trail byte of a two-byte UTF-8 sequence.
-    ///
-    /// # Safety
-    ///
-    /// `high_five` must not have bit positions other than the lowest 5 set to 1.
-    /// `low_six` must not have bit positions other than the lowest 6 set to 1.
-    ///
-    /// # Panics
-    ///
-    /// With debug assertions enabled, panics if the above safety invariants are
-    /// violated or `high_five` represents non-shortest form.
-    #[inline(always)]
-    unsafe fn get_utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
-        self.as_untyped_ref().get_utf8_two_byte(high_five, low_six)
-    }
-
-    /// Returns the value that is associated with a three-byte UTF-8 or WTF-8 sequence.
-    ///
-    /// `high_ten` is the low four bits of the lead byte of three-byte UTF-8 or WTF-8 sequence shifted left by 6 followed by the low six bits of the first trail byte.
-    /// `low_six` is the low six bits of the last trail byte of a three-byte UTF-8 or WTF-8 sequence.
-    ///
-    /// Sequences representing surrogates (WTF-8) are allowed.
-    ///
-    /// # Safety
-    ///
-    /// `high_ten` must not have bit positions other than the lowest 10 set to 1.
-    /// `low_six` must not have bit positions other than the lowest 6 set to 1.
-    ///
-    /// # Panics
-    ///
-    /// With debug assertions enabled, panics if the above safety invariants are
-    /// violated or `high_ten` is out of range for three-byte WTF-8 (or UTF-8)
-    /// sequence.
-    #[inline(always)]
-    #[allow(clippy::unusual_byte_groupings)]
-    unsafe fn get_utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
-        debug_assert!(low_six <= 0b111_111); // Safety invariant.
-        debug_assert!(high_ten <= 0b1111_111_111); // Not actually a _safety_ invariant for this impl.
-        debug_assert!(high_ten > 0b11_111); // Non-shortest form; not safety invariant.
-
-        debug_assert_eq!(Self::TRIE_TYPE, self.as_untyped_ref().header.trie_type);
-        let fast_max = match Self::TRIE_TYPE {
-            TrieType::Fast => FAST_TYPE_FAST_INDEXING_MAX,
-            TrieType::Small => SMALL_TYPE_FAST_INDEXING_MAX,
-        };
-
-        // Keep only the prefix bits:
-        let max_bit_prefix = fast_max >> FAST_TYPE_SHIFT;
-        if high_ten <= max_bit_prefix {
-            // SAFETY: The caller is responsible for upholding the safety
-            // invariant for `low_six` and we just checked the safety
-            // invariant of `high_ten`.
-            self.as_untyped_ref()
-                .get_bit_prefix_suffix_assuming_fast_index(high_ten as usize, low_six as usize)
-        } else {
-            self.as_untyped_ref()
-                .get32_by_small_index_cold((high_ten << 6) | low_six)
-        }
-    }
-
     /// Returns a reference to the wrapped `CodePointTrie`.
-    fn as_untyped_ref(&self) -> &CodePointTrie<'trie, T>;
+    fn as_untyped_ref(&self) -> &CodePointTrie<'trie, T> {
+        self.as_untyped_ref_private()
+    }
 
     /// Extracts the wrapped `CodePointTrie`.
     fn to_untyped(self) -> CodePointTrie<'trie, T>;
@@ -1759,15 +1788,48 @@ impl<'trie, T: TrieValue> FastCodePointTrie<'trie, T> {
     }
 }
 
-impl<'trie, T: TrieValue> TypedCodePointTrie<'trie, T> for FastCodePointTrie<'trie, T> {
-    const TRIE_TYPE: TrieType = TrieType::Fast;
+impl<'trie, T: TrieValue> TypedCodePointTriePrivate<'trie, T> for FastCodePointTrie<'trie, T> {
+    const TRIE_TYPE_PRIVATE: TrieType = TrieType::Fast;
+
+    /// Returns the value that is associated with a three-byte UTF-8 or WTF-8 sequence.
+    ///
+    /// `high_ten` is the low four bits of the lead byte of three-byte UTF-8 or WTF-8 sequence shifted left by 6 followed by the low six bits of the first trail byte.
+    /// `low_six` is the low six bits of the last trail byte of a three-byte UTF-8 or WTF-8 sequence.
+    ///
+    /// Sequences representing surrogates (WTF-8) are allowed.
+    ///
+    /// # Safety
+    ///
+    /// `high_ten` must not have bit positions other than the lowest 10 set to 1.
+    /// `low_six` must not have bit positions other than the lowest 6 set to 1.
+    ///
+    /// # Panics
+    ///
+    /// With debug assertions enabled, panics if the above safety invariants are
+    /// violated or `high_ten` is out of range for three-byte WTF-8 (or UTF-8)
+    /// sequence.
+    #[inline(always)]
+    #[allow(clippy::unusual_byte_groupings)]
+    unsafe fn get_utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
+        debug_assert!(low_six <= 0b111_111); // Safety invariant.
+        debug_assert!(high_ten <= 0b1111_111_111); // Safety invariant.
+        debug_assert!(high_ten > 0b11_111); // Non-shortest form; not safety invariant.
+        debug_assert_eq!(Self::TRIE_TYPE, TrieType::Fast);
+        debug_assert_eq!(self.as_untyped_ref().header.trie_type, TrieType::Fast);
+        // SAFETY: The highest character representable as a three-byte
+        // UTF-8 sequence is U+FFFF, which is `FAST_TYPE_FAST_INDEXING_MAX`.
+        self.inner
+            .get_bit_prefix_suffix_assuming_fast_index(high_ten as usize, low_six as usize)
+    }
 
     /// Returns a reference to the wrapped `CodePointTrie`.
     #[inline(always)]
-    fn as_untyped_ref(&self) -> &CodePointTrie<'trie, T> {
+    fn as_untyped_ref_private(&self) -> &CodePointTrie<'trie, T> {
         &self.inner
     }
+}
 
+impl<'trie, T: TrieValue> TypedCodePointTrie<'trie, T> for FastCodePointTrie<'trie, T> {
     /// Extracts the wrapped `CodePointTrie`.
     #[inline(always)]
     fn to_untyped(self) -> CodePointTrie<'trie, T> {
@@ -1790,38 +1852,6 @@ impl<'trie, T: TrieValue> TypedCodePointTrie<'trie, T> for FastCodePointTrie<'tr
         // We're relying on `CodePointTrie::to_typed` and `CodePointTrie::as_typed_ref`
         // being correct and the exclusive ways of obtaining `Self`.
         unsafe { self.as_untyped_ref().get32_assuming_fast_index(code_point) }
-    }
-
-    /// Returns the value that is associated with a three-byte UTF-8 or WTF-8 sequence.
-    ///
-    /// `high_ten` is the low four bits of the lead byte of three-byte UTF-8 or WTF-8 sequence shifted left by 6 followed by the low six bits of the first trail byte.
-    /// `low_six` is the low six bits of the last trail byte of a three-byte UTF-8 or WTF-8 sequence.
-    ///
-    /// Sequences representing surrogates (WTF-8) are allowed.
-    ///
-    /// # Safety
-    ///
-    /// `high_ten` must not have bit positions other than the lowest 10 set to 1.
-    /// `low_six` must not have bit positions other than the lowest 6 set to 1.
-    ///
-    /// # Panics
-    ///
-    /// With debug assertions enabled, panics if the above safety invariants are
-    /// violated or `high_ten` is out of range for three-byte WTF-8 (or UTF-8)
-    /// sequence.
-    #[inline(always)]
-    #[allow(clippy::unusual_byte_groupings)]
-    #[doc(hidden)] // ICU4X internal
-    unsafe fn get_utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
-        debug_assert!(low_six <= 0b111_111); // Safety invariant.
-        debug_assert!(high_ten <= 0b1111_111_111); // Safety invariant.
-        debug_assert!(high_ten > 0b11_111); // Non-shortest form; not safety invariant.
-        debug_assert_eq!(Self::TRIE_TYPE, TrieType::Fast);
-        debug_assert_eq!(self.as_untyped_ref().header.trie_type, TrieType::Fast);
-        // SAFETY: The highest character representable as a three-byte
-        // UTF-8 sequence is U+FFFF, which is `FAST_TYPE_FAST_INDEXING_MAX`.
-        self.inner
-            .get_bit_prefix_suffix_assuming_fast_index(high_ten as usize, low_six as usize)
     }
 }
 
@@ -1908,15 +1938,17 @@ impl<'trie, T: TrieValue> SmallCodePointTrie<'trie, T> {
     }
 }
 
-impl<'trie, T: TrieValue> TypedCodePointTrie<'trie, T> for SmallCodePointTrie<'trie, T> {
-    const TRIE_TYPE: TrieType = TrieType::Small;
+impl<'trie, T: TrieValue> TypedCodePointTriePrivate<'trie, T> for SmallCodePointTrie<'trie, T> {
+    const TRIE_TYPE_PRIVATE: TrieType = TrieType::Small;
 
     /// Returns a reference to the wrapped `CodePointTrie`.
     #[inline(always)]
-    fn as_untyped_ref(&self) -> &CodePointTrie<'trie, T> {
+    fn as_untyped_ref_private(&self) -> &CodePointTrie<'trie, T> {
         &self.inner
     }
+}
 
+impl<'trie, T: TrieValue> TypedCodePointTrie<'trie, T> for SmallCodePointTrie<'trie, T> {
     /// Extracts the wrapped `CodePointTrie`.
     #[inline(always)]
     fn to_untyped(self) -> CodePointTrie<'trie, T> {
@@ -1989,19 +2021,17 @@ pub enum Typed<F, S> {
     Small(S),
 }
 
-/// Trait for writing trait bounds for monomorphizing over either
-/// `CodePointTrie`, `FastCodePointTrie`, or `SmallCodePointTrie`.
-///
-/// Method naming intentionally differs from the method naming on
-/// those types in order to disambiguate.
+/// Trait for the the UTF-8-related accessors that logically belong on
+/// `AbstractCodePointTrie` but that we don't want to offer as a public API
+/// since they are `unsafe` and don't make much sense except from within
+/// the `utf8_iter::Utf8Handler` implementations in the `iter` module.
 #[allow(private_bounds)] // Permit sealing
-pub trait AbstractCodePointTrie<'trie, T: TrieValue>: Seal {
+pub(crate) trait AbstractCodePointTriePrivate<'trie, T: TrieValue>: Seal {
     /// Look up trie value by an ASCII character.
     ///
     /// # Safety
     ///
     /// `ascii` must be less than 128.
-    #[doc(hidden)] // ICU4X internal
     unsafe fn ascii(&self, ascii: u8) -> T;
 
     /// Look up trie value by a two-byte UTF-8 sequence.
@@ -2013,7 +2043,6 @@ pub trait AbstractCodePointTrie<'trie, T: TrieValue>: Seal {
     ///
     /// `high_five` must not have bit positions other than the lowest 5 set to 1.
     /// `low_six` must not have bit positions other than the lowest 6 set to 1.
-    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_two_byte(&self, high_five: u32, low_six: u32) -> T;
 
     /// Look up trie value by a three-byte UTF-8 or WTF-8 sequence.
@@ -2027,9 +2056,19 @@ pub trait AbstractCodePointTrie<'trie, T: TrieValue>: Seal {
     ///
     /// `high_ten` must not have bit positions other than the lowest 10 set to 1.
     /// `low_six` must not have bit positions other than the lowest 6 set to 1.
-    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T;
+}
 
+/// Trait for writing trait bounds for monomorphizing over either
+/// `CodePointTrie`, `FastCodePointTrie`, or `SmallCodePointTrie`.
+///
+/// Method naming intentionally differs from the method naming on
+/// those types in order to disambiguate.
+#[allow(private_bounds)] // Permit sealing
+pub trait AbstractCodePointTrie<'trie, T>: AbstractCodePointTriePrivate<'trie, T>
+where
+    T: TrieValue,
+{
     /// Look up trie value by a Latin1 character.
     fn latin1(&self, latin1: u8) -> T;
 
@@ -2054,25 +2093,24 @@ pub trait AbstractCodePointTrie<'trie, T: TrieValue>: Seal {
     fn code_point(&self, code_point: u32) -> T;
 }
 
-impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for FastCodePointTrie<'trie, T> {
+impl<'trie, T: TrieValue> AbstractCodePointTriePrivate<'trie, T> for FastCodePointTrie<'trie, T> {
     #[inline(always)]
-    #[doc(hidden)] // ICU4X internal
     unsafe fn ascii(&self, ascii: u8) -> T {
         self.get7(ascii)
     }
 
     #[inline(always)]
-    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
         self.get_utf8_two_byte(high_five, low_six)
     }
 
     #[inline(always)]
-    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
         self.get_utf8_three_byte(high_ten, low_six)
     }
+}
 
+impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for FastCodePointTrie<'trie, T> {
     #[inline(always)]
     fn latin1(&self, latin1: u8) -> T {
         self.get8(latin1)
@@ -2096,29 +2134,28 @@ impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for FastCodePointTrie<
     #[inline(always)]
     fn code_point(&self, code_point: u32) -> T {
         self.get32(code_point)
+    }
+}
+
+impl<'trie, T: TrieValue> AbstractCodePointTriePrivate<'trie, T> for SmallCodePointTrie<'trie, T> {
+    #[inline(always)]
+    unsafe fn ascii(&self, ascii: u8) -> T {
+        self.get7(ascii)
+    }
+
+    #[inline(always)]
+    unsafe fn utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
+        self.get_utf8_two_byte(high_five, low_six)
+    }
+
+    #[inline(always)]
+    unsafe fn utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
+        self.get_utf8_three_byte(high_ten, low_six)
     }
 }
 
 impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for SmallCodePointTrie<'trie, T> {
     #[inline(always)]
-    #[doc(hidden)] // ICU4X internal
-    unsafe fn ascii(&self, ascii: u8) -> T {
-        self.get7(ascii)
-    }
-
-    #[inline(always)]
-    #[doc(hidden)] // ICU4X internal
-    unsafe fn utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
-        self.get_utf8_two_byte(high_five, low_six)
-    }
-
-    #[inline(always)]
-    #[doc(hidden)] // ICU4X internal
-    unsafe fn utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
-        self.get_utf8_three_byte(high_ten, low_six)
-    }
-
-    #[inline(always)]
     fn latin1(&self, latin1: u8) -> T {
         self.get8(latin1)
     }
@@ -2144,25 +2181,24 @@ impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for SmallCodePointTrie
     }
 }
 
-impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for CodePointTrie<'trie, T> {
+impl<'trie, T: TrieValue> AbstractCodePointTriePrivate<'trie, T> for CodePointTrie<'trie, T> {
     #[inline(always)]
-    #[doc(hidden)] // ICU4X internal
     unsafe fn ascii(&self, ascii: u8) -> T {
         self.get7(ascii)
     }
 
     #[inline(always)]
-    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_two_byte(&self, high_five: u32, low_six: u32) -> T {
         self.get_utf8_two_byte(high_five, low_six)
     }
 
     #[inline(always)]
-    #[doc(hidden)] // ICU4X internal
     unsafe fn utf8_three_byte(&self, high_ten: u32, low_six: u32) -> T {
         self.get_utf8_three_byte(high_ten, low_six)
     }
+}
 
+impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for CodePointTrie<'trie, T> {
     #[inline(always)]
     fn latin1(&self, latin1: u8) -> T {
         self.get8(latin1)

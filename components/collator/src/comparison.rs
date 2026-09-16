@@ -49,20 +49,20 @@ use crate::provider::CollationSpecialPrimariesValidated;
 use crate::provider::CollationTailoringV1;
 use core::cmp::Ordering;
 use core::convert::{Infallible, TryFrom};
+use icu_collections::codepointtrie::iter::CharsWithTrieDefaultForAsciiEx;
+use icu_collections::codepointtrie::iter::CharsWithTrieEx;
+#[cfg(feature = "latin1")]
+use icu_collections::codepointtrie::iter::Latin1CharsWithTrieEx;
+use icu_collections::codepointtrie::iter::Utf16CharsWithTrieEx;
+use icu_collections::codepointtrie::iter::Utf8CharsWithTrieDefaultForAsciiEx;
+use icu_collections::codepointtrie::iter::Utf8CharsWithTrieEx;
+use icu_collections::codepointtrie::iter::WithTrie;
 use icu_collections::codepointtrie::AbstractCodePointTrie;
-use icu_collections::codepointtrie::CharsWithTrieDefaultForAsciiEx;
-use icu_collections::codepointtrie::CharsWithTrieEx;
 #[cfg(feature = "serde")]
 use icu_collections::codepointtrie::CodePointTrie;
 #[cfg(not(feature = "serde"))]
 use icu_collections::codepointtrie::FastCodePointTrie;
-#[cfg(feature = "latin1")]
-use icu_collections::codepointtrie::Latin1CharsWithTrieEx;
 use icu_collections::codepointtrie::TypedCodePointTrie;
-use icu_collections::codepointtrie::Utf16CharsWithTrieEx;
-use icu_collections::codepointtrie::Utf8CharsWithTrieDefaultForAsciiEx;
-use icu_collections::codepointtrie::Utf8CharsWithTrieEx;
-use icu_collections::codepointtrie::WithTrie;
 use icu_normalizer::provider::DecompositionData;
 use icu_normalizer::provider::DecompositionTables;
 use icu_normalizer::provider::NormalizerNfdDataV1;
