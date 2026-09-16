@@ -14,6 +14,9 @@
 //! from ICU4C. Detailed information about the design of the data structure can be found in the documentation
 //! for the [`CodePointTrie`] struct.
 //!
+//! In particular for the [`FastCodePointTrie`] variant, the data layout is designed for it to be efficient to
+//! fuse trie querying with UTF-8 or UTF-16 decoding. See the [`iter`] module for iterators that do this.
+//!
 //! # Examples
 //!
 //! ## Querying a `CodePointTrie`

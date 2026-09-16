@@ -1642,7 +1642,7 @@ pub(crate) trait TypedCodePointTriePrivate<'trie, T: TrieValue>: Seal {
 }
 
 /// Trait for writing trait bounds for monomorphizing over either
-/// `FastCodePointTrie` or `SmallCodePointTrie`.
+/// [`FastCodePointTrie`] or [`SmallCodePointTrie`].
 #[allow(private_bounds)] // Permit sealing
 pub trait TypedCodePointTrie<'trie, T>: TypedCodePointTriePrivate<'trie, T>
 where
@@ -2060,7 +2060,7 @@ pub(crate) trait AbstractCodePointTriePrivate<'trie, T: TrieValue>: Seal {
 }
 
 /// Trait for writing trait bounds for monomorphizing over either
-/// `CodePointTrie`, `FastCodePointTrie`, or `SmallCodePointTrie`.
+/// [`CodePointTrie`], [`FastCodePointTrie`], or [`SmallCodePointTrie`].
 ///
 /// Method naming intentionally differs from the method naming on
 /// those types in order to disambiguate.
