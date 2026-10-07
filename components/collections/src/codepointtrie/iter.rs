@@ -13,18 +13,19 @@ use utf16_iter::Utf16CharIndicesWithHandler;
 use utf16_iter::Utf16CharsEx;
 use utf16_iter::Utf16CharsWithHandler;
 use utf16_iter::Utf16Handler;
-use utf8_iter::helpers::bits_to_char;
-use utf8_iter::helpers::four_bytes_to_char;
-use utf8_iter::helpers::high_ten;
-use utf8_iter::helpers::low_five;
-use utf8_iter::helpers::low_six;
 use utf8_iter::CharIndicesWithHandler;
 use utf8_iter::CharsWithHandler;
 use utf8_iter::Utf8CharIndicesWithHandler;
 use utf8_iter::Utf8CharsEx;
 use utf8_iter::Utf8CharsWithHandler;
 use utf8_iter::Utf8Handler;
+use utf_types::utf8::Ascii;
+use utf_types::utf8::FourByteSequence;
+use utf_types::utf8::ThreeByteSequence;
+use utf_types::utf8::TwoByteSequence;
+use utf_types::utf8::Utf8ByteSequence;
 
+use crate::codepointtrie::cptrie::BmpScalarBits;
 use crate::codepointtrie::AbstractCodePointTrie;
 use crate::codepointtrie::TrieValue;
 
@@ -80,69 +81,25 @@ where
 {
     type Output = (char, V);
 
-    /// # Safety-usable invariant
-    ///
-    /// The trait contract requires the caller to guarantee that `ascii` is ASCII.
     #[inline(always)]
-    unsafe fn single_byte(&self, ascii: u8) -> Self::Output {
-        // SAFETY: The safety-usable invariant from the trait contract is
-        // the invariant of `self.trie.ascii`.
-        return (char::from(ascii), unsafe { self.trie.ascii(ascii) });
+    fn single_byte(&self, ascii: Ascii) -> Self::Output {
+        return (ascii.to_char(), self.trie.ascii(ascii));
     }
 
-    /// # Safety-usable invariant
-    ///
-    /// The trait contract requires the caller to guarantee that `first` and `second`
-    /// form a two-byte UTF-8 sequence.
     #[inline(always)]
-    unsafe fn two_byte(&self, first: u8, second: u8) -> Self::Output {
-        let high_five = low_five(first);
-        let low_six = low_six(second);
-        // SAFETY: We've satified the invariants of both `bits_to_char`
-        // and `self.trie.utf8_two_byte` by ensuring that the first
-        // argument does not have bits other than the low five set
-        // and the second argument does not have bits other than
-        // the low six set.
-        unsafe {
-            (
-                bits_to_char(high_five, low_six),
-                self.trie.utf8_two_byte(high_five, low_six),
-            )
-        }
+    fn two_byte(&self, sequence: TwoByteSequence) -> Self::Output {
+        (sequence.to_char(), self.trie.utf8_two_byte(sequence))
     }
 
-    /// # Safety-usable invariant
-    ///
-    /// The trait contract requires the caller to guarantee that `first`, `second`,
-    /// and `third` form a three-byte UTF-8 sequence.
     #[inline(always)]
-    unsafe fn three_byte(&self, first: u8, second: u8, third: u8) -> Self::Output {
-        let high_ten = high_ten(first, second);
-        let low_six = low_six(third);
-        // SAFETY: We've satified the invariants of both `bits_to_char`
-        // and `self.trie.utf8_three_byte` by ensuring that the first
-        // argument does not have bits other than the low ten set
-        // and the second argument does not have bits other than
-        // the low six set and from the safety-usable invariant
-        // we know that these bits do not represent a surrogate
-        // (for the invariant of `bits_to_char`).
-        unsafe {
-            (
-                bits_to_char(high_ten, low_six),
-                self.trie.utf8_three_byte(high_ten, low_six),
-            )
-        }
+    fn three_byte(&self, sequence: ThreeByteSequence) -> Self::Output {
+        let bits = BmpScalarBits::new(sequence);
+        (bits.to_char(), self.trie.bmp_bits(bits.into()))
     }
 
-    /// # Safety-usable invariant
-    ///
-    /// The trait contract requires the caller to guarantee that `first`, `second`,
-    /// `third`, and `fourth` form a four-byte UTF-8 sequence.
     #[inline(always)]
-    unsafe fn four_byte(&self, first: u8, second: u8, third: u8, fourth: u8) -> Self::Output {
-        // SAFETY: The safety-usable invariant of this method is the invariant of
-        // `four_bytes_to_char`.
-        let c = unsafe { four_bytes_to_char(first, second, third, fourth) };
+    fn four_byte(&self, sequence: FourByteSequence) -> Self::Output {
+        let c = sequence.to_char();
         (c, self.trie.supplementary(u32::from(c)))
     }
 
@@ -207,69 +164,25 @@ where
 {
     type Output = (char, V);
 
-    /// # Safety-usable invariant
-    ///
-    /// The trait contract requires the caller to guarantee that `ascii` is ASCII.
     #[inline(always)]
-    unsafe fn single_byte(&self, ascii: u8) -> Self::Output {
-        // SAFETY: The safety-usable invariant from the trait contract is
-        // the invariant of `self.trie.ascii`.
-        return (char::from(ascii), V::default());
+    fn single_byte(&self, ascii: Ascii) -> Self::Output {
+        return (ascii.to_char(), V::default());
     }
 
-    /// # Safety-usable invariant
-    ///
-    /// The trait contract requires the caller to guarantee that `first` and `second`
-    /// form a two-byte UTF-8 sequence.
     #[inline(always)]
-    unsafe fn two_byte(&self, first: u8, second: u8) -> Self::Output {
-        let high_five = low_five(first);
-        let low_six = low_six(second);
-        // SAFETY: We've satified the invariants of both `bits_to_char`
-        // and `self.trie.utf8_two_byte` by ensuring that the first
-        // argument does not have bits other than the low five set
-        // and the second argument does not have bits other than
-        // the low six set.
-        unsafe {
-            (
-                bits_to_char(high_five, low_six),
-                self.trie.utf8_two_byte(high_five, low_six),
-            )
-        }
+    fn two_byte(&self, sequence: TwoByteSequence) -> Self::Output {
+        (sequence.to_char(), self.trie.utf8_two_byte(sequence))
     }
 
-    /// # Safety-usable invariant
-    ///
-    /// The trait contract requires the caller to guarantee that `first`, `second`,
-    /// and `third` form a three-byte UTF-8 sequence.
     #[inline(always)]
-    unsafe fn three_byte(&self, first: u8, second: u8, third: u8) -> Self::Output {
-        let high_ten = high_ten(first, second);
-        let low_six = low_six(third);
-        // SAFETY: We've satified the invariants of both `bits_to_char`
-        // and `self.trie.utf8_three_byte` by ensuring that the first
-        // argument does not have bits other than the low ten set
-        // and the second argument does not have bits other than
-        // the low six set and from the safety-usable invariant
-        // we know that these bits do not represent a surrogate
-        // (for the invariant of `bits_to_char`).
-        unsafe {
-            (
-                bits_to_char(high_ten, low_six),
-                self.trie.utf8_three_byte(high_ten, low_six),
-            )
-        }
+    fn three_byte(&self, sequence: ThreeByteSequence) -> Self::Output {
+        let bits = BmpScalarBits::new(sequence);
+        (bits.to_char(), self.trie.bmp_bits(bits.into()))
     }
 
-    /// # Safety-usable invariant
-    ///
-    /// The trait contract requires the caller to guarantee that `first`, `second`,
-    /// `third`, and `fourth` form a four-byte UTF-8 sequence.
     #[inline(always)]
-    unsafe fn four_byte(&self, first: u8, second: u8, third: u8, fourth: u8) -> Self::Output {
-        // SAFETY: The safety-usable invariant of this method is the invariant of
-        // `four_bytes_to_char`.
-        let c = unsafe { four_bytes_to_char(first, second, third, fourth) };
+    fn four_byte(&self, sequence: FourByteSequence) -> Self::Output {
+        let c = sequence.to_char();
         (c, self.trie.supplementary(u32::from(c)))
     }
 
