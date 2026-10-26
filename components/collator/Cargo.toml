@@ -29,6 +29,7 @@ utf8_iter = { path = "../../../utf8_iter" }
 smallvec = { workspace = true, features = ["union", "const_generics", "const_new"] } # alloc
 tinystr = { workspace = true, optional = true }
 zerovec = { workspace = true }
+utf_types = { path = "../../../utf_types" }
 
 databake = { workspace = true, optional = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive", "alloc"], optional = true }

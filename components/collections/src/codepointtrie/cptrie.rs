@@ -2036,9 +2036,6 @@ pub enum Typed<F, S> {
 /// the `utf8_iter::Utf8Handler` implementations in the `iter` module.
 #[allow(private_bounds)] // Permit sealing
 pub(crate) trait AbstractCodePointTriePrivate<'trie, T: TrieValue>: Seal {
-    /// Look up trie value by an ASCII character.
-    fn ascii(&self, ascii: Ascii) -> T;
-
     /// Look up trie value by a two-byte UTF-8 sequence.
     fn utf8_two_byte(&self, sequence: TwoByteSequence) -> T;
 
@@ -2056,6 +2053,9 @@ pub trait AbstractCodePointTrie<'trie, T>: AbstractCodePointTriePrivate<'trie, T
 where
     T: TrieValue,
 {
+    /// Look up trie value by an ASCII character.
+    fn ascii(&self, ascii: Ascii) -> T;
+
     /// Look up trie value by a Latin1 character.
     fn latin1(&self, latin1: u8) -> T;
 
@@ -2082,11 +2082,6 @@ where
 
 impl<'trie, T: TrieValue> AbstractCodePointTriePrivate<'trie, T> for FastCodePointTrie<'trie, T> {
     #[inline(always)]
-    fn ascii(&self, ascii: Ascii) -> T {
-        self.get7(ascii)
-    }
-
-    #[inline(always)]
     fn utf8_two_byte(&self, sequence: TwoByteSequence) -> T {
         self.get_utf8_two_byte(sequence)
     }
@@ -2098,6 +2093,11 @@ impl<'trie, T: TrieValue> AbstractCodePointTriePrivate<'trie, T> for FastCodePoi
 }
 
 impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for FastCodePointTrie<'trie, T> {
+    #[inline(always)]
+    fn ascii(&self, ascii: Ascii) -> T {
+        self.get7(ascii)
+    }
+
     #[inline(always)]
     fn latin1(&self, latin1: u8) -> T {
         self.get8(latin1)
@@ -2126,11 +2126,6 @@ impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for FastCodePointTrie<
 
 impl<'trie, T: TrieValue> AbstractCodePointTriePrivate<'trie, T> for SmallCodePointTrie<'trie, T> {
     #[inline(always)]
-    fn ascii(&self, ascii: Ascii) -> T {
-        self.get7(ascii)
-    }
-
-    #[inline(always)]
     fn utf8_two_byte(&self, sequence: TwoByteSequence) -> T {
         self.get_utf8_two_byte(sequence)
     }
@@ -2142,6 +2137,11 @@ impl<'trie, T: TrieValue> AbstractCodePointTriePrivate<'trie, T> for SmallCodePo
 }
 
 impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for SmallCodePointTrie<'trie, T> {
+    #[inline(always)]
+    fn ascii(&self, ascii: Ascii) -> T {
+        self.get7(ascii)
+    }
+
     #[inline(always)]
     fn latin1(&self, latin1: u8) -> T {
         self.get8(latin1)
@@ -2170,11 +2170,6 @@ impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for SmallCodePointTrie
 
 impl<'trie, T: TrieValue> AbstractCodePointTriePrivate<'trie, T> for CodePointTrie<'trie, T> {
     #[inline(always)]
-    fn ascii(&self, ascii: Ascii) -> T {
-        self.get7(ascii)
-    }
-
-    #[inline(always)]
     fn utf8_two_byte(&self, sequence: TwoByteSequence) -> T {
         self.get_utf8_two_byte(sequence)
     }
@@ -2186,6 +2181,11 @@ impl<'trie, T: TrieValue> AbstractCodePointTriePrivate<'trie, T> for CodePointTr
 }
 
 impl<'trie, T: TrieValue> AbstractCodePointTrie<'trie, T> for CodePointTrie<'trie, T> {
+    #[inline(always)]
+    fn ascii(&self, ascii: Ascii) -> T {
+        self.get7(ascii)
+    }
+
     #[inline(always)]
     fn latin1(&self, latin1: u8) -> T {
         self.get8(latin1)

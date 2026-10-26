@@ -30,6 +30,7 @@ utf8_iter = { path = "../../../utf8_iter" } # Not optional because used for `str
 write16 = { workspace = true, features = ["alloc"], optional = true }
 zerovec = { workspace = true }
 zerofrom = { workspace = true, features = ["alloc"] }
+utf_types = { path = "../../../utf_types" }
 
 databake = { workspace = true, features = ["derive"], optional = true }
 serde = { workspace = true, features = ["derive", "alloc"], optional = true }

@@ -7,8 +7,6 @@
 
 use core::iter::FusedIterator;
 use core::marker::PhantomData;
-use utf16_iter::helpers::bmp_to_char;
-use utf16_iter::helpers::surrogate_pair_to_char;
 use utf16_iter::Utf16CharIndicesWithHandler;
 use utf16_iter::Utf16CharsEx;
 use utf16_iter::Utf16CharsWithHandler;
@@ -19,6 +17,9 @@ use utf8_iter::Utf8CharIndicesWithHandler;
 use utf8_iter::Utf8CharsEx;
 use utf8_iter::Utf8CharsWithHandler;
 use utf8_iter::Utf8Handler;
+use utf_types::utf16::Bmp;
+use utf_types::utf16::SurrogatePair;
+use utf_types::utf16::Utf16CodeUnitSequence;
 use utf_types::utf8::Ascii;
 use utf_types::utf8::FourByteSequence;
 use utf_types::utf8::ThreeByteSequence;
@@ -246,24 +247,14 @@ where
 {
     type Output = (char, V);
 
-    /// # Safety-usable invariant
-    ///
-    /// The trait contract requires the caller to guarantee that `bmp` is
-    /// not a surrogate.
     #[inline(always)]
-    unsafe fn bmp(&self, bmp: u16) -> Self::Output {
-        // SAFETY: The safety-usable invariant from above applies.
-        (unsafe { bmp_to_char(bmp) }, self.trie.bmp(bmp))
+    fn bmp(&self, bmp: Bmp) -> Self::Output {
+        (bmp.to_char(), self.trie.bmp(bmp.to_u16()))
     }
 
-    /// # Safety-usable invariant
-    ///
-    /// The trait contract requires the caller to guarantee that `bmp` is
-    /// not a surrogate.
     #[inline(always)]
-    unsafe fn surrogate_pair(&self, high_surrogate: u16, low_surrogate: u16) -> Self::Output {
-        // SAFETY: The safety-usable invariant from above applies.
-        let c = unsafe { surrogate_pair_to_char(high_surrogate, low_surrogate) };
+    fn surrogate_pair(&self, surrogate_pair: SurrogatePair) -> Self::Output {
+        let c = surrogate_pair.to_char();
         (c, self.trie.supplementary(u32::from(c)))
     }
 
@@ -323,7 +314,7 @@ where
     #[inline(always)]
     pub fn next_with_minimum_lead(
         &mut self,
-        multi_byte_lead: utf8_iter::helpers::MultiByteLead,
+        multi_byte_lead: utf_types::utf8::LeadForMultiByte,
     ) -> Option<(char, V)> {
         self.delegate.next_with_minimum_lead(multi_byte_lead)
     }
@@ -584,7 +575,7 @@ where
     #[inline(always)]
     pub fn next_with_minimum_lead(
         &mut self,
-        multi_byte_lead: utf8_iter::helpers::MultiByteLead,
+        multi_byte_lead: utf_types::utf8::LeadForMultiByte,
     ) -> Option<(char, V)> {
         self.delegate.next_with_minimum_lead(multi_byte_lead)
     }

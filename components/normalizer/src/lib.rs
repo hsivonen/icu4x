@@ -127,9 +127,9 @@ use provider::NormalizerNfcV2;
 use provider::NormalizerNfdTablesV1;
 use provider::NormalizerNfkdTablesV1;
 use smallvec::SmallVec;
-use utf8_iter::helpers::MultiByteLead;
 #[cfg(feature = "utf8_iter")]
 use utf8_iter::Utf8CharsEx;
+use utf_types::utf8::LeadForMultiByte;
 use zerovec::{zeroslice, ZeroSlice};
 
 // The optimizations in the area where `likely` is used
@@ -204,6 +204,15 @@ impl CanonicalCombiningClass {
 
 const CCC_NOT_REORDERED: CanonicalCombiningClass = ccc!(NotReordered, 0);
 const CCC_ABOVE: CanonicalCombiningClass = ccc!(Above, 230);
+
+const LEAD_FOR_NFC_PASSTHROUGH_BOUND: LeadForMultiByte = const {
+    // 0x300 is 0xCC 0x80 in UTF-8, i.e. the lowest character with 0xCC lead.
+    if let Ok(lead) = LeadForMultiByte::try_new(0xCC) {
+        lead
+    } else {
+        panic!()
+    }
+};
 
 /// Treatment of the ignorable marker (0xFFFFFFFF) in data.
 #[derive(Debug, PartialEq, Eq)]
@@ -3318,12 +3327,11 @@ impl<'data> ComposingNormalizerBorrowed<'data> {
         as_str,
         {
             let composition_passthrough_byte_bound = if self.decomposing_normalizer.composition_passthrough_bound == 0x300 {
-                // Unwrapping always succeeds, but let's provide a non-panic "or" value.
-                MultiByteLead::try_new(0xCC).unwrap_or(MultiByteLead::new_with_minimum()) // 0x300 is 0xCC 0x80 in UTF-8, i.e. the lowest character with 0xCC lead
+                LEAD_FOR_NFC_PASSTHROUGH_BOUND
             } else {
                 // We can make this fancy if a normalization other than NFC where looking at
                 // non-ASCII lead bytes is worthwhile is ever introduced.
-                MultiByteLead::new_with_minimum()
+                LeadForMultiByte::MIN
             };
             'fast: loop {
                 if let Some((upcoming, trie_val)) = composition.decomposition.delegate.next_with_minimum_lead(composition_passthrough_byte_bound) {

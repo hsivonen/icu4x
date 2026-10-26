@@ -1339,6 +1339,7 @@ dependencies = [
  "tinystr",
  "utf16_iter",
  "utf8_iter",
+ "utf_types",
  "zerovec",
 ]
 
@@ -1573,6 +1574,7 @@ dependencies = [
  "smallvec",
  "utf16_iter",
  "utf8_iter",
+ "utf_types",
  "write16",
  "zerofrom",
  "zerovec",
