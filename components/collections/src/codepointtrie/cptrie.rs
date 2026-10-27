@@ -18,7 +18,6 @@ use core::ops::RangeInclusive;
 use utf_types::utf8::Ascii;
 use utf_types::utf8::ThreeByteSequence;
 use utf_types::utf8::TwoByteSequence;
-use utf_types::utf8::Utf8ByteSequence;
 use yoke::Yokeable;
 use zerofrom::ZeroFrom;
 use zerovec::ule::AsULE;

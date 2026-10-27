@@ -19,12 +19,10 @@ use utf8_iter::Utf8CharsWithHandler;
 use utf8_iter::Utf8Handler;
 use utf_types::utf16::Bmp;
 use utf_types::utf16::SurrogatePair;
-use utf_types::utf16::Utf16CodeUnitSequence;
 use utf_types::utf8::Ascii;
 use utf_types::utf8::FourByteSequence;
 use utf_types::utf8::ThreeByteSequence;
 use utf_types::utf8::TwoByteSequence;
-use utf_types::utf8::Utf8ByteSequence;
 
 use crate::codepointtrie::cptrie::BmpScalarBits;
 use crate::codepointtrie::AbstractCodePointTrie;
