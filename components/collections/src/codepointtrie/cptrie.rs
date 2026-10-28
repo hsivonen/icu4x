@@ -137,9 +137,9 @@ impl BmpCodePointBits {
 
 impl From<BmpScalarBits> for BmpCodePointBits {
     fn from(scalar_bits: BmpScalarBits) -> Self {
-        // This direction is valid, because just waives
-        // the requirement for the bits not to represent
-        // a surrogate.
+        // INVARIANT UPHELD: This direction is valid, because
+        // it just waives the requirement for the bits not to
+        // represent a surrogate.
         BmpCodePointBits {
             high_ten: scalar_bits.high_ten,
             low_six: scalar_bits.low_six,
@@ -874,7 +874,6 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
     ///
     /// Surrogates are allowed.
     #[inline(always)]
-    #[allow(clippy::unusual_byte_groupings)]
     pub(crate) fn get_bmp_bits(&self, bmp_bits: BmpCodePointBits) -> T {
         let fast_max = match self.header.trie_type {
             TrieType::Fast => FAST_TYPE_FAST_INDEXING_MAX,
@@ -1629,8 +1628,8 @@ impl<T: TrieValue> Iterator for CodePointMapRangeIterator<'_, T> {
 /// # Safety Usable Invariant
 ///
 /// All implementations of `TypedCodePointTrie`, `TypedCodePointTriePrivate`,
-// `AbstractCodePointTrie`, and `AbstractCodePointTriePrivate` are
-// reviewable in this module.
+/// `AbstractCodePointTrie`, and `AbstractCodePointTriePrivate` are
+/// reviewable in this module.
 trait Seal {}
 
 impl<'trie, T: TrieValue> Seal for CodePointTrie<'trie, T> {}
@@ -1664,7 +1663,6 @@ pub(crate) trait TypedCodePointTriePrivate<'trie, T: TrieValue>: Seal {
     ///
     /// Surrogates are allowed.
     #[inline(always)]
-    #[allow(clippy::unusual_byte_groupings)]
     fn get_bmp_bits(&self, bmp_bits: BmpCodePointBits) -> T {
         debug_assert_eq!(
             Self::TRIE_TYPE_PRIVATE,
@@ -1678,7 +1676,7 @@ pub(crate) trait TypedCodePointTriePrivate<'trie, T: TrieValue>: Seal {
         // Keep only the prefix bits:
         let max_bit_prefix = fast_max >> FAST_TYPE_SHIFT;
         if bmp_bits.high_ten() <= max_bit_prefix {
-            // SAFETY: The caller is responsible for upholding the safety
+            // SAFETY: `BmpCodePointBits` guarantees the safety
             // invariant for `low_six` and we just checked the safety
             // invariant of `high_ten`.
             unsafe {
@@ -1841,7 +1839,6 @@ impl<'trie, T: TrieValue> TypedCodePointTriePrivate<'trie, T> for FastCodePointT
     ///
     /// Surrogates are allowed.
     #[inline(always)]
-    #[allow(clippy::unusual_byte_groupings)]
     fn get_bmp_bits(&self, bmp_bits: BmpCodePointBits) -> T {
         debug_assert_eq!(Self::TRIE_TYPE, TrieType::Fast);
         debug_assert_eq!(self.as_untyped_ref().header.trie_type, TrieType::Fast);
