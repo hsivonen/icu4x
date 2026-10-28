@@ -1690,6 +1690,13 @@ where
 {
 }
 
+impl<'slice, 'trie, T, V> ExactSizeIterator for Latin1CharsWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+}
+
 // --
 
 /// Iterator over Latin1 `[u8]` by index, `char` and `TrieValue`.
@@ -1811,6 +1818,13 @@ where
 {
 }
 
+impl<'slice, 'trie, T, V> ExactSizeIterator for Latin1CharIndicesWithTrie<'slice, 'trie, T, V>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+{
+}
+
 // --
 
 /// Adds convenience methods to `[u8]`.
@@ -1905,6 +1919,22 @@ where
     }
 }
 
+impl<'trie, T, V, I> Clone for CharIterWithTrie<'trie, T, V, I>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+    I: Iterator<Item = char> + Clone,
+{
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        Self {
+            delegate: self.delegate.clone(),
+            trie: self.trie,
+            phantom: PhantomData,
+        }
+    }
+}
+
 impl<'trie, T, V, I> Iterator for CharIterWithTrie<'trie, T, V, I>
 where
     V: TrieValue,
@@ -1952,6 +1982,14 @@ where
     V: TrieValue,
     T: AbstractCodePointTrie<'trie, V>,
     I: FusedIterator<Item = char>,
+{
+}
+
+impl<'trie, T, V, I> ExactSizeIterator for CharIterWithTrie<'trie, T, V, I>
+where
+    V: TrieValue,
+    T: AbstractCodePointTrie<'trie, V>,
+    I: ExactSizeIterator<Item = char>,
 {
 }
 

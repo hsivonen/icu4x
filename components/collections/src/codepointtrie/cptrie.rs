@@ -29,6 +29,11 @@ use zerovec::ZeroVec;
 /// A wrapper for the high ten and low six bits of a Unicode
 /// scalar value in the Basic Multilingual Plane (i.e. excluding
 /// surrogates).
+///
+/// The main purpose of this type as an intermediate between
+/// `ThreeByteSequence` and `BmpCodePointBits` is to ensure that
+/// `high_ten` is computed only once without relying on the optimizer
+/// to recognize that that's possible.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub(crate) struct BmpScalarBits {
     /// # Safety-usable invariant
