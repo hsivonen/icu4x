@@ -469,7 +469,6 @@ where
 
     #[inline(always)]
     fn last(mut self) -> Option<Self::Item> {
-        // XXX: Is this correct when it doesn't change the internal state as consumed?
         self.next_back()
     }
 
@@ -736,7 +735,6 @@ where
 
     #[inline(always)]
     fn last(mut self) -> Option<Self::Item> {
-        // XXX: Is this correct when it doesn't change the internal state as consumed?
         self.next_back()
     }
 
@@ -991,7 +989,6 @@ where
 
     #[inline(always)]
     fn last(mut self) -> Option<Self::Item> {
-        // XXX: Is this correct when it doesn't change the internal state as consumed?
         self.next_back()
     }
 
@@ -1253,7 +1250,6 @@ where
 
     #[inline(always)]
     fn last(mut self) -> Option<Self::Item> {
-        // XXX: Is this correct when it doesn't change the internal state as consumed?
         self.next_back()
     }
 
@@ -1513,7 +1509,6 @@ where
 
     #[inline(always)]
     fn last(mut self) -> Option<Self::Item> {
-        // XXX: Is this correct when it doesn't change the internal state as consumed?
         self.next_back()
     }
 
