@@ -696,6 +696,7 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
     /// should use small-path lookup or is above the supported range.
     #[inline(always)] // "always" to make the `Option` collapse away
     fn get32_by_fast_index(&self, code_point: u32) -> Option<T> {
+        #[allow(clippy::manual_map)]
         if let Some(bmp_bits) = BmpCodePointBits::try_new(code_point, self.header.trie_type) {
             // SAFETY: `BmpCodePointBits::try_new` checked the invariant of
             // `get_bmp_bits_assuming_fast_index`.
@@ -1771,6 +1772,7 @@ where
     #[inline(always)] // "always" to make the `Option` collapse away
     fn get32_by_fast_index(&self, code_point: u32) -> Option<T> {
         debug_assert_eq!(Self::TRIE_TYPE, self.as_untyped_ref().header.trie_type);
+        #[allow(clippy::manual_map)]
         if let Some(bmp_bits) = BmpCodePointBits::try_new(code_point, Self::TRIE_TYPE) {
             // SAFETY: `BmpCodePointBits::try_new` checked the invariant of
             // `get_bmp_bits_assuming_fast_index`.
