@@ -831,7 +831,7 @@ where
         }
     }
 
-    /// Obtains the remainder of the iterator as a string slice.
+    /// Obtains the remainder of the iterator as a `u8` slice.
     #[inline(always)]
     pub fn as_slice(&self) -> &'slice [u8] {
         self.delegate.as_slice()
@@ -933,7 +933,7 @@ where
         }
     }
 
-    /// Obtains the remainder of the iterator as a string slice.
+    /// Obtains the remainder of the iterator as a `u8` slice.
     #[inline(always)]
     pub fn as_slice(&self) -> &'slice [u8] {
         self.delegate.as_slice()
@@ -1082,7 +1082,7 @@ where
         }
     }
 
-    /// Obtains the remainder of the iterator as a string slice.
+    /// Obtains the remainder of the iterator as a `u8` slice.
     #[inline(always)]
     pub fn as_slice(&self) -> &'slice [u8] {
         self.delegate.as_slice()
@@ -1193,7 +1193,7 @@ where
         }
     }
 
-    /// Obtains the remainder of the iterator as a string slice.
+    /// Obtains the remainder of the iterator as a `u8` slice.
     #[inline(always)]
     pub fn as_slice(&self) -> &'slice [u8] {
         self.delegate.as_slice()
@@ -1343,13 +1343,13 @@ where
 {
     /// Construct a new `Utf16CharsWithTrie`.
     #[inline(always)]
-    pub fn new(bytes: &'slice [u16], trie: &'trie T) -> Self {
+    pub fn new(code_units: &'slice [u16], trie: &'trie T) -> Self {
         Self {
-            delegate: Utf16CharsWithHandler::new(bytes, TrieUtf16Handler::new(trie)),
+            delegate: Utf16CharsWithHandler::new(code_units, TrieUtf16Handler::new(trie)),
         }
     }
 
-    /// Obtains the remainder of the iterator as a string slice.
+    /// Obtains the remainder of the iterator as a `u16` slice.
     #[inline(always)]
     pub fn as_slice(&self) -> &'slice [u16] {
         self.delegate.as_slice()
@@ -1453,7 +1453,7 @@ where
         }
     }
 
-    /// Obtains the remainder of the iterator as a string slice.
+    /// Obtains the remainder of the iterator as a `u16` slice.
     #[inline(always)]
     pub fn as_slice(&self) -> &'slice [u16] {
         self.delegate.as_slice()
@@ -1542,10 +1542,10 @@ where
     V: TrieValue,
     T: AbstractCodePointTrie<'trie, V>,
 {
-    /// Method for easily creating `Utf16CharsWithTrie` on `[u8]` analogously to `chars()` on `str`.
+    /// Method for easily creating `Utf16CharsWithTrie` on `[u16]` analogously to `chars()` on `str`.
     fn chars_with_trie(&'slice self, trie: &'trie T) -> Utf16CharsWithTrie<'slice, 'trie, T, V>;
 
-    /// Method for easily creating `Utf16CharIndicesWithTrie` on `[u8]` analogously to `char_indices()` on `str`.
+    /// Method for easily creating `Utf16CharIndicesWithTrie` on `[u16]` analogously to `char_indices()` on `str`.
     fn char_indices_with_trie(
         &'slice self,
         trie: &'trie T,
