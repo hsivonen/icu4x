@@ -274,6 +274,11 @@ pub struct CodePointTrie<'trie, T: TrieValue> {
     /// this field must not change after construction. (Strictly: It must
     /// not become shorter than the length requirement stated above and the
     /// values within the prefix up to the length requirement must not change.)
+    ///
+    /// Not a memory-safety invariant but an invariant required for different
+    /// accessors to yield consistent results: The value at position 0 of `index`
+    /// must be 0 and the value at position 1 must be 64 (for consistency with
+    /// direct data access by ASCII value).
     pub(crate) index: ZeroVec<'trie, u16>,
     /// # Safety Invariant
     ///
@@ -283,7 +288,8 @@ pub struct CodePointTrie<'trie, T: TrieValue> {
     /// must be greater than `FAST_TYPE_DATA_MASK` plus the largest value in
     /// `index[0..SMALL_TYPE_FAST_INDEXING_MAX + 1]`. Furthermore, this field
     /// must not change after construction. (Strictly: The stated length
-    /// requirement must continue to hold.)
+    /// requirement must continue to hold.) Additionally, `data.len()` must
+    /// be greater than or equal to 128 (for ASCII fast access).
     pub(crate) data: ZeroVec<'trie, T>,
     // serde impl skips this field
     #[zerofrom(clone)] // TrieValue is Copy, this allows us to avoid
@@ -518,6 +524,13 @@ impl<'trie, T: TrieValue> CodePointTrie<'trie, T> {
         // by ASCII.
         if data.len() < 128 {
             return Err(Error::DataTooShortForAsciiAccess);
+        }
+
+        // Since ASCII works by direct access, it follows that the first two
+        // items of `index` have to be consistent with that. (Not memory-safety,
+        // but still a check against bogus data.)
+        if index.get(0) != Some(0) || index.get(1) != Some(64) {
+            return Err(Error::IndexInconsistentWithAsciiAccess);
         }
 
         // Invariant upheld for `data`: If we got this far, the length of `data`
@@ -1794,7 +1807,8 @@ impl<'trie, T: TrieValue> FastCodePointTrie<'trie, T> {
     ///
     /// `header.trie_type`, `index`, and `data` must
     /// satisfy the invariants for the fields of the
-    /// same names on `CodePointTrie`.
+    /// same names on `CodePointTrie`. `header.trie_type`
+    /// must be `TrieType::Fast`.
     pub const unsafe fn from_parts_unstable_unchecked_v1(
         header: CodePointTrieHeader,
         index: ZeroVec<'trie, u16>,
@@ -1925,7 +1939,8 @@ impl<'trie, T: TrieValue> SmallCodePointTrie<'trie, T> {
     ///
     /// `header.trie_type`, `index`, and `data` must
     /// satisfy the invariants for the fields of the
-    /// same names on `CodePointTrie`.
+    /// same names on `CodePointTrie`. `header.trie_type`
+    /// must be `TrieType::Small`.
     pub const unsafe fn from_parts_unstable_unchecked_v1(
         header: CodePointTrieHeader,
         index: ZeroVec<'trie, u16>,
