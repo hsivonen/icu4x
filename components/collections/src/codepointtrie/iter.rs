@@ -82,7 +82,7 @@ where
 
     #[inline(always)]
     fn single_byte(&self, ascii: Ascii) -> Self::Output {
-        return (ascii.to_char(), self.trie.ascii(ascii));
+        (ascii.to_char(), self.trie.ascii(ascii))
     }
 
     #[inline(always)]
@@ -165,7 +165,7 @@ where
 
     #[inline(always)]
     fn single_byte(&self, ascii: Ascii) -> Self::Output {
-        return (ascii.to_char(), V::default());
+        (ascii.to_char(), V::default())
     }
 
     #[inline(always)]
