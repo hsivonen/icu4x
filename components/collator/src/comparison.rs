@@ -219,6 +219,10 @@ fn in_inclusive_range16(i: u16, start: u16, end: u16) -> bool {
 /// ✨ *Enabled with the `latin1` Cargo feature.*
 #[cfg(feature = "latin1")]
 fn split_prefix_latin1<'a, 'b>(left: &'a [u8], right: &'b [u8]) -> (&'a [u8], &'a [u8], &'b [u8]) {
+    if cfg!(feature = "serde") {
+        // The identical prefix optimization relies on correct data. Turn it off when `serde` is enabled.
+        return (&[], left, right);
+    }
     let i = left
         .iter()
         .zip(right.iter())
@@ -244,6 +248,10 @@ fn split_prefix_latin1_utf16<'a, 'b>(
     left: &'a [u8],
     right: &'b [u16],
 ) -> (&'a [u8], &'a [u8], &'b [u16]) {
+    if cfg!(feature = "serde") {
+        // The identical prefix optimization relies on correct data. Turn it off when `serde` is enabled.
+        return (&[], left, right);
+    }
     let i = left
         .iter()
         .zip(right.iter())
@@ -268,6 +276,10 @@ fn split_prefix_u16<'a, 'b>(
     left: &'a [u16],
     right: &'b [u16],
 ) -> (&'a [u16], &'a [u16], &'b [u16]) {
+    if cfg!(feature = "serde") {
+        // The identical prefix optimization relies on correct data. Turn it off when `serde` is enabled.
+        return (&[], left, right);
+    }
     let mut i = left
         .iter()
         .zip(right.iter())
@@ -296,6 +308,10 @@ fn split_prefix_u16<'a, 'b>(
 /// Returns the identical prefix, the part of `left` after the
 /// prefix, and the part of `right` after the prefix.
 fn split_prefix_u8<'a, 'b>(left: &'a [u8], right: &'b [u8]) -> (&'a [u8], &'a [u8], &'b [u8]) {
+    if cfg!(feature = "serde") {
+        // The identical prefix optimization relies on correct data. Turn it off when `serde` is enabled.
+        return (&[], left, right);
+    }
     let mut i = left
         .iter()
         .zip(right.iter())
@@ -338,6 +354,10 @@ fn split_prefix_u8<'a, 'b>(left: &'a [u8], right: &'b [u8]) -> (&'a [u8], &'a [u
 /// Returns the identical prefix, the part of `left` after the
 /// prefix, and the part of `right` after the prefix.
 fn split_prefix<'a, 'b>(left: &'a str, right: &'b str) -> (&'a str, &'a str, &'b str) {
+    if cfg!(feature = "serde") {
+        // The identical prefix optimization relies on correct data. Turn it off when `serde` is enabled.
+        return ("", left, right);
+    }
     let left_bytes = left.as_bytes();
     let right_bytes = right.as_bytes();
     let mut i = left_bytes
@@ -792,7 +812,8 @@ macro_rules! compare {
                 return Ordering::Equal;
             }
             let $variable_top = $self.variable_top();
-            if head.is_empty() {
+            // Disable the fast primary check when data may be bogus.
+            if head.is_empty() && cfg!(not(feature = "serde")) {
                 $primary_check
             }
             let norm_trie = $self.norm_trie();
@@ -1334,6 +1355,8 @@ impl<'data> CollatorBorrowed<'data> {
 
         // This loop is only broken out of as goto forward.
         #[expect(clippy::never_loop)]
+        #[cfg(not(feature = "serde"))]
+        // Disable the identical prefix optimization when data may be bogus
         'prefix: loop {
             if let Some((mut head_last_c, head_last_trie_val)) = head_chars.next_back() {
                 let mut head_last = CharacterAndClassAndTrieValue::new_with_trie_val(
