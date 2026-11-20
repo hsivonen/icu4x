@@ -27,14 +27,32 @@ use zerovec::ule::AsULE;
 use zerovec::{ZeroSlice, zeroslice};
 
 use crate::elements::CollationElement;
+
+#[cfg(not(feature = "datagen"))]
 use crate::elements::CollationElement32;
+#[cfg(not(feature = "datagen"))]
+use crate::elements::Tag;
+
+#[cfg(feature = "datagen")]
+pub use crate::elements::COMMON_SEC_AND_TER_CE32;
+#[cfg(feature = "datagen")]
+pub use crate::elements::CollationElement32;
+#[cfg(feature = "datagen")]
+pub use crate::elements::LONG_PRIMARY_FOR_REORDERABLE_CE32_LOW_BYTE;
+#[cfg(feature = "datagen")]
+pub use crate::elements::MAX_INDEX;
+#[cfg(feature = "datagen")]
+pub use crate::elements::SPECIAL_CE32_LOW_BYTE;
+#[cfg(feature = "datagen")]
+pub use crate::elements::Tag;
+
 use crate::elements::EMPTY_U16;
 use crate::elements::FFFD_CE;
 use crate::elements::FFFD_CE_VALUE;
 use crate::elements::FFFD_CE32;
 use crate::elements::FFFD_CE32_VALUE;
+use crate::elements::FFFD_PRIMARY;
 use crate::elements::NO_CE_PRIMARY;
-use crate::elements::Tag;
 use crate::preferences::CollationCaseFirst;
 
 use crate::options::MaxVariable;
@@ -243,6 +261,15 @@ impl<'data> CollationData<'data> {
         // GIGO case
         debug_assert!(false);
         SINGLE_U64
+    }
+    pub(crate) fn get_primary_from_ces(&'data self, index: usize) -> u32 {
+        if let Some(ce) = self.ces.get(index) {
+            (ce >> 32) as u32
+        } else {
+            // GIGO case
+            debug_assert!(false);
+            FFFD_PRIMARY
+        }
     }
     fn get_default_and_trie_impl(
         &'data self,

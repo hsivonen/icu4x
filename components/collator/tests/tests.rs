@@ -1633,6 +1633,24 @@ fn test_numeric_after() {
 }
 
 #[test]
+fn test_numeric_middle_zeros() {
+    let mut prefs = CollatorPreferences::default();
+    prefs.numeric_ordering = Some(CollationNumericOrdering::True);
+
+    let collator = Collator::try_new(prefs, CollatorOptions::default()).unwrap();
+    assert_eq!(collator.compare("5001", "501"), Ordering::Greater);
+}
+
+#[test]
+fn test_numeric_middle_zeros_long() {
+    let mut prefs = CollatorPreferences::default();
+    prefs.numeric_ordering = Some(CollationNumericOrdering::True);
+
+    let collator = Collator::try_new(prefs, CollatorOptions::default()).unwrap();
+    assert_eq!(collator.compare("50001", "5002"), Ordering::Greater);
+}
+
+#[test]
 fn test_unpaired_surrogates() {
     let mut options = CollatorOptions::default();
     options.strength = Some(Strength::Quaternary);
@@ -2079,6 +2097,14 @@ fn test_fffe_issue_6811() {
         collator.compare_utf16(&[0xFFFE, 0x0000], &[0x0000, 0xFFFE]),
         Ordering::Less
     );
+}
+
+#[test]
+fn test_numeric_more() {
+    let mut prefs = CollatorPreferences::default();
+    prefs.numeric_ordering = Some(CollationNumericOrdering::True);
+    let collator = Collator::try_new(prefs, CollatorOptions::default()).unwrap();
+    assert_eq!(collator.compare("8A", "899"), Ordering::Less);
 }
 
 #[test]

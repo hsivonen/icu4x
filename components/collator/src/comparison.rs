@@ -17,12 +17,19 @@ use crate::elements::CE_BUFFER_SIZE;
 use crate::elements::CharacterAndClassAndTrieValue;
 use crate::elements::CollationElement32;
 use crate::elements::FALLBACK_CE32;
+use crate::elements::HANGUL_N_COUNT;
+use crate::elements::HANGUL_S_BASE;
+use crate::elements::HANGUL_S_COUNT;
+use crate::elements::HANGUL_T_COUNT;
+use crate::elements::IDENTICAL_PREFIX_HANGUL_MARKER_CE32;
 use crate::elements::NON_ROUND_TRIP_MARKER;
 use crate::elements::Tag;
 use crate::elements::{
-    CollationElement, CollationElements, FFFD_CE32, HANGUL_SYLLABLE_MARKER, HIGH_ZEROS_MASK,
-    LOW_ZEROS_MASK, NO_CE, NO_CE_PRIMARY, NO_CE_QUATERNARY, NO_CE_SECONDARY, NO_CE_TERTIARY,
-    NonPrimary, OPTIMIZED_DIACRITICS_MAX_COUNT, QUATERNARY_MASK, char_from_u32,
+    CollationElement, CollationElements, NO_CE, NO_CE_PRIMARY, NO_CE_QUATERNARY, NO_CE_SECONDARY,
+    NO_CE_TERTIARY, NonPrimary, OPTIMIZED_DIACRITICS_MAX_COUNT, QUATERNARY_MASK,
+};
+use crate::elements::{
+    FFFD_CE32, HANGUL_SYLLABLE_MARKER, HIGH_ZEROS_MASK, LOW_ZEROS_MASK, char_from_u32,
 };
 use crate::options::CollatorOptionsBitField;
 use crate::options::{AlternateHandling, CollatorOptions, ResolvedCollatorOptions, Strength};
@@ -44,10 +51,13 @@ use core::cmp::Ordering;
 use core::convert::Infallible;
 use icu_collections::codepointtrie::AbstractCodePointTrie;
 use icu_collections::codepointtrie::FastCodePointTrie;
+use icu_collections::codepointtrie::TypedCodePointTrie;
 use icu_collections::codepointtrie::iter::CharsWithTrieDefaultForAsciiEx;
+use icu_collections::codepointtrie::iter::CharsWithTrieEx;
 #[cfg(feature = "latin1")]
 use icu_collections::codepointtrie::iter::Latin1CharsWithTrieEx;
 use icu_collections::codepointtrie::iter::Utf8CharsWithTrieDefaultForAsciiEx;
+use icu_collections::codepointtrie::iter::Utf8CharsWithTrieEx;
 use icu_collections::codepointtrie::iter::Utf16CharsWithTrieEx;
 use icu_collections::codepointtrie::iter::WithTrie;
 use icu_normalizer::provider::DecompositionData;
@@ -56,6 +66,8 @@ use icu_normalizer::provider::NormalizerNfdDataV1;
 use icu_normalizer::provider::NormalizerNfdTablesV1;
 use icu_provider::prelude::*;
 use smallvec::SmallVec;
+#[cfg(feature = "latin1")]
+use utf_types::utf8::Ascii;
 
 type NormTrie<'trie> = FastCodePointTrie<'trie, u32>;
 
@@ -639,6 +651,102 @@ impl Collator {
     }
 }
 
+macro_rules! quick_primary_compare {
+    ($left_primary:ident,
+     $right_primary:ident,
+     $variable_top:ident,
+     $self:ident,
+    ) => {
+        if ($left_primary != $right_primary)
+            && ($left_primary != 0)
+            && ($right_primary != 0)
+            && !($left_primary < $variable_top && $left_primary > MERGE_SEPARATOR_PRIMARY)
+            && !($right_primary < $variable_top && $right_primary > MERGE_SEPARATOR_PRIMARY)
+        {
+            if let Some(reordering) = &$self.reordering {
+                $left_primary = reordering.reorder($left_primary);
+                $right_primary = reordering.reorder($right_primary);
+            }
+            if $left_primary < $right_primary {
+                return Ordering::Less;
+            }
+            return Ordering::Greater;
+        }
+    };
+}
+
+macro_rules! hangul_syllable_compare {
+    ($left_hangul_offset:ident,
+     $right_hangul_offset:ident,
+    ) => {
+        let left_l = $left_hangul_offset / HANGUL_N_COUNT;
+        let right_l = $right_hangul_offset / HANGUL_N_COUNT;
+        if left_l != right_l {
+            // We don't really support jamo tailoring, so let's
+            // compare the jamo directly.
+            if left_l < right_l {
+                return Ordering::Less;
+            }
+            return Ordering::Greater;
+        }
+        let left_v = ($left_hangul_offset % HANGUL_N_COUNT) / HANGUL_T_COUNT;
+        let right_v = ($right_hangul_offset % HANGUL_N_COUNT) / HANGUL_T_COUNT;
+        if left_v != right_v {
+            // We don't really support jamo tailoring, so let's
+            // compare the jamo directly.
+            if left_v < right_v {
+                return Ordering::Less;
+            }
+            return Ordering::Greater;
+        }
+        let left_t = $left_hangul_offset % HANGUL_T_COUNT;
+        let right_t = $right_hangul_offset % HANGUL_T_COUNT;
+        // If either syllable is a two-jamo syllable, we fall through.
+        if left_t != right_t && left_t != 0 && right_t != 0 {
+            // We don't really support jamo tailoring, so let's
+            // compare the jamo directly.
+            if left_t < right_t {
+                return Ordering::Less;
+            }
+            return Ordering::Greater;
+        }
+    };
+}
+
+macro_rules! utf8_primary_check {
+    ($self:ident,
+     $left_tail:ident,
+     $right_tail:ident,
+     $variable_top:ident,
+    ) => {
+        let tailoring_trie = &$self.tailoring.trie;
+        if let Some((left_c, left_u32)) = $left_tail.chars_with_trie(tailoring_trie).next() {
+            // Logically, there's a bunch of stuff we could do from the left side alone to determine
+            // that reading from the right side at all or reading from the right trie is useless.
+            // Doing that seems to be a pessimization, at least in the absence of PGO.
+            if let Some((right_c, right_u32)) = $right_tail.chars_with_trie(tailoring_trie).next() {
+                let left_ce32 = CollationElement32::new(left_u32);
+                let right_ce32 = CollationElement32::new(right_u32);
+                let mut left_primary = left_ce32.to_primary_in_quick_check($self.tailoring);
+                // If `left_primary` is now zero, we don't really need to extract `right_primary`,
+                // but let's avoid the branch on the likely path.
+                let mut right_primary = right_ce32.to_primary_in_quick_check($self.tailoring);
+                quick_primary_compare!(left_primary, right_primary, $variable_top, $self,);
+                // Try Hangul.
+                let right_hangul_offset = u32::from(right_c).wrapping_sub(HANGUL_S_BASE);
+                if right_hangul_offset < HANGUL_S_COUNT {
+                    let left_hangul_offset = u32::from(left_c).wrapping_sub(HANGUL_S_BASE);
+                    if left_hangul_offset < HANGUL_S_COUNT {
+                        hangul_syllable_compare!(left_hangul_offset, right_hangul_offset,);
+                    }
+                }
+            }
+        }
+        // Note: It might look like a good idea to cache the CE32s, but
+        // doing so actually makes things slower.
+    };
+}
+
 macro_rules! compare {
     ($(#[$meta:meta])*,
      $compare:ident,
@@ -647,20 +755,29 @@ macro_rules! compare {
      $split_prefix:ident,
      $left_to_iter:ident,
      $right_to_iter:ident,
+     $self:ident,
+     $left_tail:ident,
+     $right_tail:ident,
+     $primary_check:block,
+     $variable_top:ident,
     ) => {
         $(#[$meta])*
-        pub fn $compare(&self, left: &$left_slice, right: &$right_slice) -> Ordering {
-            let (head, left_tail, right_tail) = $split_prefix(left, right);
-            if left_tail.is_empty() && right_tail.is_empty() {
+        pub fn $compare(&$self, left: &$left_slice, right: &$right_slice) -> Ordering {
+            let (head, $left_tail, $right_tail) = $split_prefix(left, right);
+            if $left_tail.is_empty() && $right_tail.is_empty() {
                 return Ordering::Equal;
             }
-            let norm_trie = self.norm_trie();
-            let ret = self.compare_impl(left_tail.$left_to_iter(norm_trie), right_tail.$right_to_iter(norm_trie), head.$left_to_iter(norm_trie));
-            if self.options.strength() == Strength::Identical && ret == Ordering::Equal {
+            let $variable_top = $self.variable_top();
+            if head.is_empty() {
+                $primary_check
+            }
+            let norm_trie = $self.norm_trie();
+            let ret = $self.compare_impl($left_tail.$left_to_iter(norm_trie), $right_tail.$right_to_iter(norm_trie), head.$left_to_iter(norm_trie), $variable_top);
+            if $self.options.strength() == Strength::Identical && ret == Ordering::Equal {
                 // Both iterators start with an extra U+0000. Since it's the same
                 // on both sides, it cancels out and doesn't need to be discarded.
-                return icu_normalizer::new_decomposition(left_tail.$left_to_iter(norm_trie), self.tables).map(|c| if c != MERGE_SEPARATOR { c as i32 } else { -1i32 }).cmp(
-                    icu_normalizer::new_decomposition(right_tail.$right_to_iter(norm_trie), self.tables).map(|c| if c != MERGE_SEPARATOR { c as i32 } else { -1i32 }),
+                return icu_normalizer::new_decomposition($left_tail.$left_to_iter(norm_trie), $self.tables).map(|c| if c != MERGE_SEPARATOR { c as i32 } else { -1i32 }).cmp(
+                    icu_normalizer::new_decomposition($right_tail.$right_to_iter(norm_trie), $self.tables).map(|c| if c != MERGE_SEPARATOR { c as i32 } else { -1i32 }),
                 );
             }
             ret
@@ -809,6 +926,13 @@ impl<'data> CollatorBorrowed<'data> {
         split_prefix,
         chars_with_trie_default_for_ascii,
         chars_with_trie_default_for_ascii,
+        self,
+        left_tail,
+        right_tail,
+        {
+            utf8_primary_check!(self, left_tail, right_tail, variable_top,);
+        },
+        variable_top,
     );
 
     compare!(
@@ -822,6 +946,13 @@ impl<'data> CollatorBorrowed<'data> {
         split_prefix_u8,
         chars_with_trie_default_for_ascii,
         chars_with_trie_default_for_ascii,
+        self,
+        left_tail,
+        right_tail,
+        {
+            utf8_primary_check!(self, left_tail, right_tail, variable_top,);
+        },
+        variable_top,
     );
 
     compare!(
@@ -834,6 +965,38 @@ impl<'data> CollatorBorrowed<'data> {
         split_prefix_u16,
         chars_with_trie,
         chars_with_trie,
+        self,
+        left_tail,
+        right_tail,
+        {
+            let tailoring_trie = &self.tailoring.trie;
+            if let Some(left_u) = left_tail.first()
+                && let Some(right_u) = right_tail.first()
+            {
+                let left_u16 = *left_u;
+                let right_u16 = *right_u;
+                let left_u32 = tailoring_trie.get16(left_u16);
+                let right_u32 = tailoring_trie.get16(right_u16);
+                let left_ce32 = CollationElement32::new(left_u32);
+                let right_ce32 = CollationElement32::new(right_u32);
+                let mut left_primary = left_ce32.to_primary_in_quick_check(self.tailoring);
+                // If `left_primary` is now zero, we don't really need to extract `right_primary`,
+                // but let's avoid the branch on the likely path.
+                let mut right_primary = right_ce32.to_primary_in_quick_check(self.tailoring);
+                quick_primary_compare!(left_primary, right_primary, variable_top, self,);
+                // Try Hangul.
+                let left_hangul_offset = u32::from(left_u16).wrapping_sub(HANGUL_S_BASE);
+                if left_hangul_offset < HANGUL_S_COUNT {
+                    let right_hangul_offset = u32::from(right_u16).wrapping_sub(HANGUL_S_BASE);
+                    if right_hangul_offset < HANGUL_S_COUNT {
+                        hangul_syllable_compare!(left_hangul_offset, right_hangul_offset,);
+                    }
+                }
+            }
+            // Note: It might look like a good idea to cache the CE32s, but
+            // doing so actually makes things slower.
+        },
+        variable_top,
     );
 
     compare!(
@@ -848,6 +1011,50 @@ impl<'data> CollatorBorrowed<'data> {
         split_prefix_latin1,
         latin1_chars_with_trie,
         latin1_chars_with_trie,
+        self,
+        left_tail,
+        right_tail,
+        {
+            let tailoring_trie = &self.tailoring.trie;
+            if let Some(left_u) = left_tail.first()
+                && let Some(right_u) = right_tail.first()
+            {
+                let left_u8 = *left_u;
+                let right_u8 = *right_u;
+                // The probability of getting a non-simple ce32 from
+                // the Latin1 part above ASCII is so high that let's
+                // only consider ASCII on the left for this fast path.
+
+                if let Ok(left_ascii) = Ascii::try_new(left_u8) {
+                    let left_u32 = tailoring_trie.ascii(left_ascii);
+                    let left_ce32 = CollationElement32::new(left_u32);
+                    if let Ok(right_ascii) = Ascii::try_new(right_u8) {
+                        let right_u32 = tailoring_trie.ascii(right_ascii);
+                        let right_ce32 = CollationElement32::new(right_u32);
+                        // Should we use script reordering to cater to reordering
+                        // digits or punctuation relative to letters?
+                        let left_primary = left_ce32.to_primary_simple();
+                        // If `left_primary` is now zero, we don't really need to extract `right_primary`,
+                        // but let's avoid the branch on the likely path.
+                        let right_primary = right_ce32.to_primary_simple();
+                        if (left_primary != right_primary)
+                            && (left_primary != 0)
+                            && (right_primary != 0)
+                            && !(left_primary < variable_top && left_primary > MERGE_SEPARATOR_PRIMARY)
+                            && !(right_primary < variable_top && right_primary > MERGE_SEPARATOR_PRIMARY)
+                        {
+                            if left_primary < right_primary {
+                                return Ordering::Less;
+                            }
+                            return Ordering::Greater;
+                        }
+                    }
+                }
+            }
+            // Note: It might look like a good idea to cache the CE32s, but
+            // doing so actually makes things slower.
+        },
+        variable_top,
     );
 
     compare!(
@@ -867,6 +1074,55 @@ impl<'data> CollatorBorrowed<'data> {
         split_prefix_latin1_utf16,
         latin1_chars_with_trie,
         chars_with_trie,
+        self,
+        left_tail,
+        right_tail,
+        {
+            let tailoring_trie = &self.tailoring.trie;
+            if let Some(left_u) = left_tail.first()
+                && let Some(right_u) = right_tail.first()
+            {
+                let left_u8 = *left_u;
+                // The probability of getting a non-simple ce32 from
+                // the Latin1 part above ASCII is so high that let's
+                // only consider ASCII on the left for this fast path.
+
+                if let Ok(left_ascii) = Ascii::try_new(left_u8) {
+                    // SAFETY: Invariant of `get7` checked above.
+                    let left_u32 = tailoring_trie.ascii(left_ascii);
+                    let left_ce32 = CollationElement32::new(left_u32);
+                    let right_u16 = *right_u;
+                    let right_u32 = tailoring_trie.get16(right_u16);
+                    let right_ce32 = CollationElement32::new(right_u32);
+                    let mut left_primary = left_ce32.to_primary_simple();
+                    // If `left_primary` is now zero, we don't really need to
+                    // extract `right_primary`, but let's avoid the branch on
+                    // the likely path.
+
+                    // Don't use the macro to micro-optimize away the long primary
+                    // case for ASCII.
+                    let mut right_primary = right_ce32.to_primary_in_quick_check(self.tailoring);
+                    if (left_primary != right_primary)
+                        && (left_primary != 0)
+                        && (right_primary != 0)
+                        && !(left_primary < variable_top && left_primary > MERGE_SEPARATOR_PRIMARY)
+                        && !(right_primary < variable_top && right_primary > MERGE_SEPARATOR_PRIMARY)
+                    {
+                        if let Some(reordering) = &self.reordering {
+                            left_primary = reordering.reorder(left_primary);
+                            right_primary = reordering.reorder(right_primary);
+                        }
+                        if left_primary < right_primary {
+                            return Ordering::Less;
+                        }
+                        return Ordering::Greater;
+                    }
+                }
+            }
+            // Note: It might look like a good idea to cache the CE32s, but
+            // doing so actually makes things slower.
+        },
+        variable_top,
     );
 
     #[inline(always)]
@@ -895,7 +1151,13 @@ impl<'data> CollatorBorrowed<'data> {
     /// `head_chars` is an iterator _backward_ over the identical
     /// prefix and `left_chars` and `right_chars` are iterators
     /// _forward_ over the parts after the identical prefix.
-    fn compare_impl<L, R, H, T>(&self, left_chars: L, right_chars: R, mut head_chars: H) -> Ordering
+    fn compare_impl<L, R, H, T>(
+        &self,
+        left_chars: L,
+        right_chars: R,
+        mut head_chars: H,
+        variable_top: u32,
+    ) -> Ordering
     where
         L: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32> + 'data,
         R: Iterator<Item = (char, u32)> + WithTrie<'data, T, u32> + 'data,
@@ -922,9 +1184,9 @@ impl<'data> CollatorBorrowed<'data> {
         // The algorithm comes from CollationCompare::compareUpToQuaternary in ICU4C.
 
         let mut any_variable = false;
-        let variable_top = self.variable_top();
 
         let numeric_primary = self.numeric_primary();
+
         let jamo = self.jamo.as_array();
         let lithuanian_dot_above = self.options.lithuanian_dot_above();
         let mut left = CollationElements::new(
@@ -1059,15 +1321,15 @@ impl<'data> CollatorBorrowed<'data> {
                                 // Let's take the starter
                                 head_last_c = char_from_u32(decomposition & 0x7FFF);
                             } else if decomposition == HANGUL_SYLLABLE_MARKER {
-                                head_last_ce32 = FFFD_CE32;
+                                head_last_ce32 = IDENTICAL_PREFIX_HANGUL_MARKER_CE32;
                             } else {
                                 break;
                             }
                             head_last_ok = true;
 
-                            let mut left_ce32 = CollationElement32::default();
-                            let mut right_ce32 = CollationElement32::default();
                             let left_c;
+                            // Initialized late for symmetry with `left_c`.
+                            #[expect(clippy::needless_late_init)]
                             let right_c;
 
                             let decomposition = left_different.trie_val;
@@ -1083,8 +1345,27 @@ impl<'data> CollatorBorrowed<'data> {
                                 // Let's take the starter
                                 left_c = char_from_u32(decomposition & 0x7FFF);
                             } else if decomposition == HANGUL_SYLLABLE_MARKER {
-                                left_c = '\u{0}';
-                                left_ce32 = FFFD_CE32;
+                                left_c = left_different.character();
+                                if right_different.trie_val == HANGUL_SYLLABLE_MARKER {
+                                    // Hangul syllable to Hangul syllable comparison can give us
+                                    // a quick exit.
+                                    let left_hangul_offset =
+                                        u32::from(left_c).wrapping_sub(HANGUL_S_BASE);
+                                    let right_hangul_offset =
+                                        u32::from(right_different.character())
+                                            .wrapping_sub(HANGUL_S_BASE);
+                                    // If these are not in range, we have a memory-safe GIGO case.
+                                    debug_assert!(left_hangul_offset < HANGUL_S_COUNT);
+                                    debug_assert!(right_hangul_offset < HANGUL_S_COUNT);
+                                    hangul_syllable_compare!(
+                                        left_hangul_offset,
+                                        right_hangul_offset,
+                                    );
+                                    // We had a two-jamo syllable whose jamo matched
+                                    // the first two jamo of the other syllable.
+                                    // Still, we're at a good boundary.
+                                    break 'prefix;
+                                }
                             } else {
                                 break;
                             }
@@ -1102,8 +1383,7 @@ impl<'data> CollatorBorrowed<'data> {
                                 // Let's take the starter
                                 right_c = char_from_u32(decomposition & 0x7FFF);
                             } else if decomposition == HANGUL_SYLLABLE_MARKER {
-                                right_c = '\u{0}';
-                                right_ce32 = FFFD_CE32;
+                                right_c = right_different.character();
                             } else {
                                 break;
                             }
@@ -1122,34 +1402,65 @@ impl<'data> CollatorBorrowed<'data> {
                                     break;
                                 }
                             }
-                            // The first character of each suffix is OK on the normalization
-                            // level. Now let's check their ce32s unless they are Hangul syllables.
-                            if left_ce32 == CollationElement32::default() {
-                                left_ce32 = self.tailoring.ce32_for_char(left_c);
-                                if left_ce32 == FALLBACK_CE32 {
-                                    left_ce32 = self.root.ce32_for_char(left_c);
-                                }
-                                if left_ce32.tag_checked() == Some(Tag::Prefix) {
-                                    break;
-                                }
+                            let mut left_data = self.tailoring;
+                            let mut left_ce32 = self.tailoring.ce32_for_char(left_c);
+                            if left_ce32 == FALLBACK_CE32 {
+                                left_ce32 = self.root.ce32_for_char(left_c);
+                                left_data = self.root;
                             }
-                            if right_ce32 == CollationElement32::default() {
-                                right_ce32 = self.tailoring.ce32_for_char(right_c);
-                                if right_ce32 == FALLBACK_CE32 {
-                                    right_ce32 = self.root.ce32_for_char(right_c);
-                                }
-                                if right_ce32.tag_checked() == Some(Tag::Prefix) {
-                                    break;
-                                }
+                            let mut right_data = self.tailoring;
+                            let mut right_ce32 = self.tailoring.ce32_for_char(right_c);
+                            if right_ce32 == FALLBACK_CE32 {
+                                right_ce32 = self.root.ce32_for_char(right_c);
+                                right_data = self.root;
                             }
-                            if self.options.numeric()
-                                && head_last_ce32.tag_checked() == Some(Tag::Digit)
-                                && (left_ce32.tag_checked() == Some(Tag::Digit)
-                                    || right_ce32.tag_checked() == Some(Tag::Digit))
+
+                            // We might be at at a good boundary unless either ce32 is a
+                            // prefix ce32. Let's check for the happy path first, though.
+
+                            // Now check if the ce32s we have are simple enough to
+                            // make a quick decision here.
+                            let mut left_primary = left_ce32.to_primary_in_quick_check_numeric(
+                                left_data,
+                                numeric_primary.is_some(),
+                            );
+                            // If `left_primary` is now zero, we don't really need
+                            // to extract `right_primary`, but let's avoid the branch
+                            // on the likely path.
+                            let mut right_primary = right_ce32.to_primary_in_quick_check_numeric(
+                                right_data,
+                                numeric_primary.is_some(),
+                            );
+                            quick_primary_compare!(left_primary, right_primary, variable_top, self,);
+
+                            if left_ce32.tag_checked() == Some(Tag::Prefix)
+                                || right_ce32.tag_checked() == Some(Tag::Prefix)
                             {
+                                // TODO: For the Japanese tailoring, it might actually be worthwhile
+                                // to handle the prefix ce32s inline above the quick check. We've already
+                                // read the last character from `head` anyway.
                                 break;
                             }
-                            // We are at a good boundary!
+
+                            if numeric_primary.is_some()
+                                && head_last_ce32.tag_checked() == Some(Tag::Digit)
+                                && ((left_ce32.tag_checked() == Some(Tag::Digit)
+                                    && left_ce32.digit() == 0)
+                                    || (right_ce32.tag_checked() == Some(Tag::Digit)
+                                        && right_ce32.digit() == 0)
+                                    || ((left_ce32.tag_checked() == Some(Tag::Digit))
+                                        ^ (right_ce32.tag_checked() == Some(Tag::Digit))))
+                            {
+                                // Avoid giving the zero the leading zero treatment
+                                // and also reject the case where only one of
+                                // right and left is a digit.
+                                break;
+                            }
+
+                            // We're at a good boundary but could not make a quick primary comparison decision.
+
+                            // Note: It might look like a good idea to cache the CE32s, but
+                            // doing so actually makes things slower.
                             break 'prefix;
                         }
                     }
@@ -1223,10 +1534,12 @@ impl<'data> CollatorBorrowed<'data> {
                     if tail_first_ce32.tag_checked() == Some(Tag::Prefix) {
                         continue;
                     }
-                    if self.options.numeric()
+                    if numeric_primary.is_some()
                         && head_last_ce32.tag_checked() == Some(Tag::Digit)
                         && tail_first_ce32.tag_checked() == Some(Tag::Digit)
+                        && tail_first_ce32.digit() == 0
                     {
+                        // Avoid giving the zero the leading zero treatment.
                         continue;
                     }
                     // We are at a good boundary!
